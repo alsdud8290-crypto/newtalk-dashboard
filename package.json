@@ -1,0 +1,21 @@
+{
+  "name": "newtalk-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "뉴토크 코리아 경영 대시보드",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "seed:demo": "node --env-file-if-exists=.env scripts/seed-demo.js",
+    "seed:users": "node --env-file-if-exists=.env scripts/seed-users.js"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "chart.js": "^4.5.1",
+    "express": "^4.22.3",
+    "xlsx": "^0.18.5"
+  }
+}
