@@ -51,13 +51,17 @@ npm start                 # http://localhost:3000
 - 추정 손익 = 매출 − (상품 매입 + 원재료 매입 + 경비 + 기타 지출). 회계상 영업이익과 다를 수 있습니다.
 - 미수금 경과일은 청구일 기준, 오늘 날짜 기준입니다.
 
-## 배포 (GitHub + Render)
+## 배포 (GitHub + Render 무료 + Turso 무료)
 
-1. 이 폴더를 GitHub **비공개(Private)** 저장소에 올립니다. `data/`(DB)와 `.env`는 올라가지 않습니다.
-2. render.com → **New → Blueprint** → 저장소 선택. `render.yaml` 설정으로 서버(싱가포르 리전, Starter 플랜)와 1GB 디스크가 만들어집니다.
-3. 환경변수 입력 화면에서 `INITIAL_ADMIN_PASSWORD`(최초 admin 비밀번호)를 입력합니다. `ANTHROPIC_API_KEY`는 선택입니다.
-4. 배포가 끝나면 `https://<서비스명>.onrender.com` 으로 접속해 admin으로 로그인 → 비밀번호 변경 → 관리자 페이지에서 직원 등록.
+- **Render 무료 서버**: 서버 실행. 15분 동안 접속이 없으면 절전되고, 다음 첫 접속은 약 1분 걸립니다.
+- **Turso 무료 DB**: 데이터 보관. Render 무료 서버는 재시작 때 파일이 지워지므로 데이터는 Turso에 저장합니다.
 
-- 이후 GitHub `main` 브랜치에 올리면 자동으로 다시 배포됩니다. 데이터는 디스크(`/var/data`)에 보관되어 재배포해도 유지됩니다.
-- 백업: Render 대시보드 → Shell 에서 `/var/data/dashboard.db` 파일을 내려받거나, Render의 디스크 스냅샷(매일 자동)을 사용합니다.
+1. [turso.tech](https://turso.tech) 가입 → 데이터베이스 생성(지역: Tokyo 권장) → 데이터베이스 주소(`libsql://...`)와 토큰을 복사합니다.
+2. render.com → **New → Blueprint** → `newtalk-dashboard` 저장소 → Connect.
+3. 환경변수 입력: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `INITIAL_ADMIN_PASSWORD`(최초 admin 비밀번호), `ANTHROPIC_API_KEY`(선택).
+4. 배포가 끝나면 `https://<서비스명>.onrender.com` 에 admin으로 로그인 → 비밀번호 변경 → 관리자 페이지에서 직원 등록.
+
+- GitHub `main` 브랜치에 올리면 자동으로 다시 배포됩니다.
+- Turso가 연결되지 않은 상태로 배포되면 화면 왼쪽에 "데이터가 재시작 시 삭제됨" 경고가 표시됩니다.
+- 로컬(이 PC)에서는 Turso 설정 없이 `data/dashboard.db` 파일에 저장됩니다.
 - 운영 환경에서는 로그인 5회 실패 시 10분 잠금, HTTPS 전용 쿠키, 보안 헤더가 적용됩니다.

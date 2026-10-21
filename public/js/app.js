@@ -93,6 +93,7 @@ function renderShell() {
       </header>
       <aside class="lnb">
         <div class="lnb-title">경영 대시보드</div>
+        ${state.meta?.ephemeralStorage ? '<div class="notice warn" style="margin:0 4px 12px;font-size:12px">⚠ 데이터베이스(Turso)가 연결되지 않아 입력한 데이터가 서버 재시작 시 삭제됩니다. 관리자에게 문의해 주세요.</div>' : ''}
         ${groups || '<div class="empty">열람 가능한 메뉴가 없습니다.<br>관리자에게 권한을 요청해 주세요.</div>'}
       </aside>
       <main class="main" id="main"></main>

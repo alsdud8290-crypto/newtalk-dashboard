@@ -1,10 +1,10 @@
 // 화면 확인용 샘플 데이터 생성. 실제 데이터가 아닙니다. 거래처명에 (샘플)이 붙습니다.
 // 사용: npm run seed:demo           (데이터가 비어 있을 때만)
 //       npm run seed:demo -- --force (기존 경영 데이터를 지우고 샘플로 교체)
-import { db, tx } from '../lib/db.js';
+import { db } from '../lib/db.js';
 
 const force = process.argv.includes('--force');
-const existing = db.prepare('SELECT (SELECT COUNT(*) FROM monthly) + (SELECT COUNT(*) FROM sales) + (SELECT COUNT(*) FROM receivables) AS n').get().n;
+const existing = Number((await db.get('SELECT (SELECT COUNT(*) FROM monthly) + (SELECT COUNT(*) FROM sales) + (SELECT COUNT(*) FROM receivables) AS n')).n);
 if (existing && !force) {
   console.error('이미 경영 데이터가 있습니다. 덮어쓰려면 --force 옵션을 붙여 주세요.');
   process.exit(1);
@@ -26,14 +26,14 @@ const today = new Date();
 const curY = today.getFullYear();
 const curM = today.getMonth() + 1;
 
-tx(() => {
-  db.exec('DELETE FROM monthly; DELETE FROM sales; DELETE FROM receivables; DELETE FROM targets; DELETE FROM ai_comments;');
-  db.prepare('INSERT INTO targets (year, revenue) VALUES (?, ?), (?, ?)').run(curY - 1, 4_500_000_000, curY, 5_000_000_000);
-
-  const insS = db.prepare('INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)');
-  const insR = db.prepare('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)');
-  const insM = db.prepare(`INSERT INTO monthly (year, month, product_purchase, material_purchase, expense, ad_expense, entertainment_expense, other_expense, product_sales, goods_sales, service_sales)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+// 모든 문장을 모아 한 번에(원자적으로) 실행
+const stmts = ['monthly', 'sales', 'receivables', 'targets', 'ai_comments'].map((t) => [`DELETE FROM ${t}`, []]);
+stmts.push(['INSERT INTO targets (year, revenue) VALUES (?, ?), (?, ?)', [curY - 1, 4_500_000_000, curY, 5_000_000_000]]);
+const insS = { run: (...a) => stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', a]) };
+const insR = { run: (...a) => stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', a]) };
+const insM = { run: (...a) => stmts.push([`INSERT INTO monthly (year, month, product_purchase, material_purchase, expense, ad_expense, entertainment_expense, other_expense, product_sales, goods_sales, service_sales)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a]) };
+{
 
   for (const year of [curY - 1, curY]) {
     const lastMonth = year === curY ? curM - 1 : 12; // 올해는 지난달까지
@@ -66,11 +66,12 @@ tx(() => {
     }
   }
   // 월별 매출을 매출 내역 합계로 채움 (월별 입력과 내역이 일치하는 상태)
-  db.exec(`UPDATE monthly SET
+  stmts.push([`UPDATE monthly SET
     product_sales = COALESCE((SELECT SUM(amount) FROM sales s WHERE substr(s.date,1,7) = printf('%04d-%02d', monthly.year, monthly.month) AND sales_type='제품'),0),
     goods_sales   = COALESCE((SELECT SUM(amount) FROM sales s WHERE substr(s.date,1,7) = printf('%04d-%02d', monthly.year, monthly.month) AND sales_type='상품'),0),
-    service_sales = COALESCE((SELECT SUM(amount) FROM sales s WHERE substr(s.date,1,7) = printf('%04d-%02d', monthly.year, monthly.month) AND sales_type='용역'),0)`);
-});
+    service_sales = COALESCE((SELECT SUM(amount) FROM sales s WHERE substr(s.date,1,7) = printf('%04d-%02d', monthly.year, monthly.month) AND sales_type='용역'),0)`, []]);
+}
+await db.batch(stmts);
 
-const c = db.prepare('SELECT (SELECT COUNT(*) FROM monthly) AS m, (SELECT COUNT(*) FROM sales) AS s, (SELECT COUNT(*) FROM receivables) AS r').get();
+const c = await db.get('SELECT (SELECT COUNT(*) FROM monthly) AS m, (SELECT COUNT(*) FROM sales) AS s, (SELECT COUNT(*) FROM receivables) AS r');
 console.log(`샘플 데이터 생성 완료: 월별실적 ${c.m}건, 매출내역 ${c.s}건, 미수금 ${c.r}건`);

@@ -1,26 +1,25 @@
 # Render 블루프린트: GitHub 저장소를 연결하면 이 설정으로 서버가 만들어진다.
+# 무료 플랜: 서버는 무료(15분 미사용 시 절전, 첫 접속 약 1분 대기), 데이터는 Turso(무료)에 보관.
 services:
   - type: web
     name: newtalk-dashboard
     runtime: node
     region: singapore          # 한국과 가장 가까운 리전
-    plan: starter              # 디스크(데이터 보관)는 유료 플랜에서만 가능
+    plan: free
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /healthz
     autoDeploy: true           # GitHub main 브랜치에 올리면 자동 배포
-    disk:
-      name: data
-      mountPath: /var/data     # SQLite DB 파일이 저장되는 곳 (재배포해도 유지)
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATA_DIR
-        value: /var/data
       - key: TZ
         value: Asia/Seoul      # 날짜·월 계산을 한국 시간 기준으로
+      - key: TURSO_DATABASE_URL
+        sync: false            # Turso 데이터베이스 주소 (libsql://...)
+      - key: TURSO_AUTH_TOKEN
+        sync: false            # Turso 토큰
       - key: INITIAL_ADMIN_PASSWORD
-        sync: false            # Render 화면에서 직접 입력 (최초 admin 비밀번호)
+        sync: false            # 최초 admin 비밀번호
       - key: ANTHROPIC_API_KEY
         sync: false            # 선택: Claude AI 분석용

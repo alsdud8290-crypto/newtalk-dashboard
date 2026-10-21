@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, tx } from './lib/db.js';
+import { db, nowStr } from './lib/db.js';
 import {
   DEPTS, PERMS, defaultPerms, hashPassword, verifyPassword, newToken, parseCookies, publicUser,
 } from './lib/auth.js';
@@ -75,15 +75,15 @@ const intParam = (v, min, max, name) => {
 };
 
 // ---------- 인증 ----------
-app.use((req, _res, next) => {
+app.use(wrap(async (req, _res, next) => {
   const token = parseCookies(req.headers.cookie).sid;
   if (token) {
-    const row = db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-                            WHERE s.token = ? AND s.expires_at > ? AND u.active = 1`).get(token, Date.now());
+    const row = await db.get(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+                            WHERE s.token = ? AND s.expires_at > ? AND u.active = 1`, token, Date.now());
     if (row) { req.user = row; req.token = token; }
   }
   next();
-});
+}));
 
 const requireLogin = (req, _res, next) => next(req.user ? undefined : new HttpError(401, '로그인이 필요합니다.'));
 const requirePerm = (perm) => (req, _res, next) => {
@@ -98,7 +98,7 @@ const MAX_FAILS = 5;
 const loginFails = new Map();
 const cookieFlags = (req) => `HttpOnly; SameSite=Lax; Path=/${req.secure ? '; Secure' : ''}`;
 
-app.post('/api/login', wrap((req, res) => {
+app.post('/api/login', wrap(async (req, res) => {
   const { username, password } = req.body || {};
   const key = `${req.ip}|${str(username).toLowerCase()}`;
   const now = Date.now();
@@ -106,7 +106,7 @@ app.post('/api/login', wrap((req, res) => {
   if (f && f.count >= MAX_FAILS && now - f.last < LOCK_MS) {
     throw new HttpError(429, `로그인 시도가 너무 많습니다. ${Math.ceil((LOCK_MS - (now - f.last)) / 60000)}분 후 다시 시도해 주세요.`);
   }
-  const u = db.prepare('SELECT * FROM users WHERE username = ?').get(str(username));
+  const u = await db.get('SELECT * FROM users WHERE username = ?', str(username));
   if (!u || !u.active || !verifyPassword(String(password || ''), u.password_hash)) {
     const cur = f && now - f.last < LOCK_MS ? f : { count: 0 };
     loginFails.set(key, { count: cur.count + 1, last: now });
@@ -115,37 +115,43 @@ app.post('/api/login', wrap((req, res) => {
   }
   loginFails.delete(key);
   const token = newToken();
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
-  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)')
-    .run(token, u.id, Date.now() + SESSION_DAYS * 86400000);
+  await db.run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
+  await db.run('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', token, u.id, Date.now() + SESSION_DAYS * 86400000);
   res.setHeader('Set-Cookie', `sid=${token}; ${cookieFlags(req)}; Max-Age=${SESSION_DAYS * 86400}`);
   res.json({ user: publicUser(u) });
 }));
 
-app.post('/api/logout', (req, res) => {
-  if (req.token) db.prepare('DELETE FROM sessions WHERE token = ?').run(req.token);
+app.post('/api/logout', wrap(async (req, res) => {
+  if (req.token) await db.run('DELETE FROM sessions WHERE token = ?', req.token);
   res.setHeader('Set-Cookie', `sid=; ${cookieFlags(req)}; Max-Age=0`);
-  res.json({ ok: true });
-});
-
-app.get('/api/me', requireLogin, (req, res) => res.json({ user: publicUser(req.user) }));
-
-app.post('/api/me/password', requireLogin, wrap((req, res) => {
-  const { current, next } = req.body || {};
-  if (!verifyPassword(String(current || ''), req.user.password_hash)) throw new HttpError(400, '현재 비밀번호가 올바르지 않습니다.');
-  if (String(next || '').length < 8) throw new HttpError(400, '새 비밀번호는 8자 이상이어야 합니다.');
-  db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 0 WHERE id = ?').run(hashPassword(next), req.user.id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(req.user.id, req.token);
   res.json({ ok: true });
 }));
 
-app.get('/api/meta', requireLogin, (_req, res) => {
-  const series = db.prepare("SELECT DISTINCT series FROM sales WHERE series <> '' ORDER BY series").all().map((r) => r.series);
-  const customers = db.prepare('SELECT DISTINCT customer FROM sales UNION SELECT DISTINCT customer FROM receivables ORDER BY 1').all().map((r) => r.customer);
-  const years = db.prepare(`SELECT year FROM monthly UNION SELECT year FROM targets
-                            UNION SELECT CAST(substr(date,1,4) AS INTEGER) FROM sales ORDER BY 1`).all().map((r) => r.year);
-  res.json({ industries: INDUSTRIES, salesTypes: SALES_TYPES, depts: DEPTS, series, customers, years });
-});
+app.get('/api/me', requireLogin, (req, res) => res.json({ user: publicUser(req.user) }));
+
+app.post('/api/me/password', requireLogin, wrap(async (req, res) => {
+  const { current, next } = req.body || {};
+  if (!verifyPassword(String(current || ''), req.user.password_hash)) throw new HttpError(400, '현재 비밀번호가 올바르지 않습니다.');
+  if (String(next || '').length < 8) throw new HttpError(400, '새 비밀번호는 8자 이상이어야 합니다.');
+  await db.run('UPDATE users SET password_hash = ?, must_change_pw = 0 WHERE id = ?', hashPassword(next), req.user.id);
+  await db.run('DELETE FROM sessions WHERE user_id = ? AND token <> ?', req.user.id, req.token);
+  res.json({ ok: true });
+}));
+
+app.get('/api/meta', requireLogin, wrap(async (req, res) => {
+  const [series, customers, years] = await Promise.all([
+    db.all("SELECT DISTINCT series FROM sales WHERE series <> '' ORDER BY series"),
+    db.all('SELECT DISTINCT customer FROM sales UNION SELECT DISTINCT customer FROM receivables ORDER BY 1'),
+    db.all(`SELECT year FROM monthly UNION SELECT year FROM targets
+            UNION SELECT CAST(substr(date,1,4) AS INTEGER) FROM sales ORDER BY 1`),
+  ]);
+  res.json({
+    industries: INDUSTRIES, salesTypes: SALES_TYPES, depts: DEPTS,
+    series: series.map((r) => r.series), customers: customers.map((r) => r.customer), years: years.map((r) => Number(r.year)),
+    // 배포 서버가 로컬 파일(무료 서버는 재시작 시 삭제)에 저장 중이면 화면에 경고
+    ephemeralStorage: IS_PROD && db.kind === 'local' && !process.env.DATA_DIR,
+  });
+}));
 
 // ---------- 경영지원팀: 대시보드 ----------
 const mgmt = express.Router();
@@ -158,25 +164,24 @@ function parsePeriod(q) {
   return { year, mode, period };
 }
 
-mgmt.get('/summary', wrap((req, res) => {
+mgmt.get('/summary', wrap(async (req, res) => {
   const { year, mode, period } = parsePeriod(req.query);
-  res.json(summarize(year, mode, period));
+  res.json(await summarize(year, mode, period));
 }));
 
-mgmt.get('/ai-comment', wrap((req, res) => {
+mgmt.get('/ai-comment', wrap(async (req, res) => {
   const { year, mode, period } = parsePeriod(req.query);
-  const row = db.prepare('SELECT * FROM ai_comments WHERE key = ?').get(`${year}-${mode}-${period}`);
+  const row = await db.get('SELECT * FROM ai_comments WHERE key = ?', `${year}-${mode}-${period}`);
   res.json(row ? { ...JSON.parse(row.content), source: row.source, createdAt: row.created_at } : null);
 }));
 
 mgmt.post('/ai-comment', wrap(async (req, res) => {
   const { year, mode, period } = parsePeriod(req.body || {});
-  const result = await generateComment(summarize(year, mode, period));
+  const result = await generateComment(await summarize(year, mode, period));
   const { source, error, ...content } = result;
-  db.prepare(`INSERT INTO ai_comments (key, content, source, created_at) VALUES (?, ?, ?, datetime('now','localtime'))
-              ON CONFLICT(key) DO UPDATE SET content = excluded.content, source = excluded.source, created_at = excluded.created_at`)
-    .run(`${year}-${mode}-${period}`, JSON.stringify(content), source);
-  const row = db.prepare('SELECT created_at FROM ai_comments WHERE key = ?').get(`${year}-${mode}-${period}`);
+  await db.run(`INSERT INTO ai_comments (key, content, source, created_at) VALUES (?, ?, ?, ?)
+              ON CONFLICT(key) DO UPDATE SET content = excluded.content, source = excluded.source, created_at = excluded.created_at`, `${year}-${mode}-${period}`, JSON.stringify(content), source, nowStr());
+  const row = await db.get('SELECT created_at FROM ai_comments WHERE key = ?', `${year}-${mode}-${period}`);
   res.json({ ...content, source, error, createdAt: row.created_at });
 }));
 
@@ -184,38 +189,39 @@ mgmt.post('/ai-comment', wrap(async (req, res) => {
 const MONTHLY_FIELDS = ['product_purchase', 'material_purchase', 'expense', 'ad_expense', 'entertainment_expense',
   'other_expense', 'product_sales', 'goods_sales', 'service_sales'];
 
-mgmt.get('/targets/:year', wrap((req, res) => {
+mgmt.get('/targets/:year', wrap(async (req, res) => {
   const year = intParam(req.params.year, 2000, 2100, '연도');
-  res.json({ year, revenue: db.prepare('SELECT revenue FROM targets WHERE year = ?').get(year)?.revenue || 0 });
+  res.json({ year, revenue: (await db.get('SELECT revenue FROM targets WHERE year = ?', year))?.revenue || 0 });
 }));
 
-mgmt.put('/targets/:year', wrap((req, res) => {
+mgmt.put('/targets/:year', wrap(async (req, res) => {
   const year = intParam(req.params.year, 2000, 2100, '연도');
   const revenue = num(req.body?.revenue);
-  db.prepare('INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue').run(year, revenue);
+  await db.run('INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue', year, revenue);
   res.json({ year, revenue });
 }));
 
-mgmt.get('/monthly/:year', wrap((req, res) => {
+mgmt.get('/monthly/:year', wrap(async (req, res) => {
   const year = intParam(req.params.year, 2000, 2100, '연도');
-  const rows = db.prepare('SELECT * FROM monthly WHERE year = ? ORDER BY month').all(year);
-  const detail = db.prepare(`SELECT CAST(substr(date,6,2) AS INTEGER) AS month, sales_type, SUM(amount) AS amount
-                             FROM sales WHERE substr(date,1,4) = ? GROUP BY month, sales_type`).all(String(year));
+  const rows = await db.all('SELECT * FROM monthly WHERE year = ? ORDER BY month', year);
+  const detail = await db.all(`SELECT CAST(substr(date,6,2) AS INTEGER) AS month, sales_type, SUM(amount) AS amount
+                             FROM sales WHERE substr(date,1,4) = ? GROUP BY month, sales_type`, String(year));
   res.json({ year, rows, detail });
 }));
 
+// 월별 실적 저장 문장 (db.batch 에 넣어 한 번에 실행)
 function upsertMonthly(year, month, data) {
   const vals = MONTHLY_FIELDS.map((f) => num(data[f]));
-  db.prepare(`INSERT INTO monthly (year, month, ${MONTHLY_FIELDS.join(', ')}, updated_at)
-              VALUES (?, ?, ${MONTHLY_FIELDS.map(() => '?').join(', ')}, datetime('now','localtime'))
-              ON CONFLICT(year, month) DO UPDATE SET ${MONTHLY_FIELDS.map((f) => `${f} = excluded.${f}`).join(', ')},
-              updated_at = excluded.updated_at`).run(year, month, ...vals);
+  return [`INSERT INTO monthly (year, month, ${MONTHLY_FIELDS.join(', ')}, updated_at)
+           VALUES (?, ?, ${MONTHLY_FIELDS.map(() => '?').join(', ')}, ?)
+           ON CONFLICT(year, month) DO UPDATE SET ${MONTHLY_FIELDS.map((f) => `${f} = excluded.${f}`).join(', ')},
+           updated_at = excluded.updated_at`, [year, month, ...vals, nowStr()]];
 }
 
-mgmt.put('/monthly/:year', wrap((req, res) => {
+mgmt.put('/monthly/:year', wrap(async (req, res) => {
   const year = intParam(req.params.year, 2000, 2100, '연도');
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  tx(() => rows.forEach((r) => upsertMonthly(year, intParam(r.month, 1, 12, '월'), r)));
+  await db.batch(rows.map((r) => upsertMonthly(year, intParam(r.month, 1, 12, '월'), r)));
   res.json({ ok: true, count: rows.length });
 }));
 
@@ -230,20 +236,20 @@ function cleanSale(b) {
   return [date(b.date, '일자'), customer, industry, str(b.series), salesType, num(b.amount), str(b.note)];
 }
 
-mgmt.get('/sales', wrap((req, res) => {
+mgmt.get('/sales', wrap(async (req, res) => {
   const year = intParam(req.query.year, 2000, 2100, '연도');
-  res.json(db.prepare('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date DESC, id DESC').all(String(year)));
+  res.json(await db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date DESC, id DESC', String(year)));
 }));
-mgmt.post('/sales', wrap((req, res) => {
-  const r = db.prepare('INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)').run(...cleanSale(req.body || {}));
+mgmt.post('/sales', wrap(async (req, res) => {
+  const r = await db.run('INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', ...cleanSale(req.body || {}));
   res.json({ id: Number(r.lastInsertRowid) });
 }));
-mgmt.put('/sales/:id', wrap((req, res) => {
-  db.prepare('UPDATE sales SET date=?, customer=?, industry=?, series=?, sales_type=?, amount=?, note=? WHERE id=?').run(...cleanSale(req.body || {}), Number(req.params.id));
+mgmt.put('/sales/:id', wrap(async (req, res) => {
+  await db.run('UPDATE sales SET date=?, customer=?, industry=?, series=?, sales_type=?, amount=?, note=? WHERE id=?', ...cleanSale(req.body || {}), Number(req.params.id));
   res.json({ ok: true });
 }));
-mgmt.delete('/sales/:id', wrap((req, res) => {
-  db.prepare('DELETE FROM sales WHERE id = ?').run(Number(req.params.id));
+mgmt.delete('/sales/:id', wrap(async (req, res) => {
+  await db.run('DELETE FROM sales WHERE id = ?', Number(req.params.id));
   res.json({ ok: true });
 }));
 
@@ -255,26 +261,26 @@ function cleanRecv(b) {
     date(b.collected_date, '수금일자', true), date(b.due_date, '결제예정일', true), str(b.note)];
 }
 
-mgmt.get('/receivables', wrap((req, res) => {
+mgmt.get('/receivables', wrap(async (req, res) => {
   const where = req.query.open === '1' ? 'WHERE amount - collected > 0.5' : '';
-  res.json(db.prepare(`SELECT * FROM receivables ${where} ORDER BY invoice_date DESC, id DESC`).all());
+  res.json(await db.all(`SELECT * FROM receivables ${where} ORDER BY invoice_date DESC, id DESC`));
 }));
-mgmt.post('/receivables', wrap((req, res) => {
-  const r = db.prepare('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)').run(...cleanRecv(req.body || {}));
+mgmt.post('/receivables', wrap(async (req, res) => {
+  const r = await db.run('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', ...cleanRecv(req.body || {}));
   res.json({ id: Number(r.lastInsertRowid) });
 }));
-mgmt.put('/receivables/:id', wrap((req, res) => {
-  db.prepare('UPDATE receivables SET customer=?, invoice_date=?, amount=?, collected=?, collected_date=?, due_date=?, note=? WHERE id=?').run(...cleanRecv(req.body || {}), Number(req.params.id));
+mgmt.put('/receivables/:id', wrap(async (req, res) => {
+  await db.run('UPDATE receivables SET customer=?, invoice_date=?, amount=?, collected=?, collected_date=?, due_date=?, note=? WHERE id=?', ...cleanRecv(req.body || {}), Number(req.params.id));
   res.json({ ok: true });
 }));
-mgmt.delete('/receivables/:id', wrap((req, res) => {
-  db.prepare('DELETE FROM receivables WHERE id = ?').run(Number(req.params.id));
+mgmt.delete('/receivables/:id', wrap(async (req, res) => {
+  await db.run('DELETE FROM receivables WHERE id = ?', Number(req.params.id));
   res.json({ ok: true });
 }));
 
 // ---------- 경영지원팀: 엑셀 일괄 업로드 (과거 데이터 이관) ----------
 // 클라이언트가 엑셀을 파싱해 JSON으로 보낸다. 행 단위 오류는 모아서 반환하고, 오류가 있으면 아무것도 저장하지 않는다.
-mgmt.post('/import', wrap((req, res) => {
+mgmt.post('/import', wrap(async (req, res) => {
   const { targets = [], monthly = [], sales = [], receivables = [], replaceSalesYears = false, replaceReceivables = false } = req.body || {};
   const errors = [];
   const check = (sheet, i, fn) => {
@@ -287,18 +293,17 @@ mgmt.post('/import', wrap((req, res) => {
   const rv = receivables.map((r, i) => check('미수금', i, () => cleanRecv(r)));
   if (errors.length) return res.status(400).json({ error: '업로드 데이터에 오류가 있어 저장하지 않았습니다.', details: errors.slice(0, 50), total: errors.length });
 
-  tx(() => {
-    for (const [year, revenue] of t) db.prepare('INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue').run(year, revenue);
-    for (const x of m) upsertMonthly(x.year, x.month, x.r);
-    if (replaceSalesYears) {
-      for (const y of new Set(s.map((r) => r[0].slice(0, 4)))) db.prepare('DELETE FROM sales WHERE substr(date,1,4) = ?').run(y);
-    }
-    const insS = db.prepare('INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)');
-    for (const r of s) insS.run(...r);
-    if (replaceReceivables) db.exec('DELETE FROM receivables');
-    const insR = db.prepare('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)');
-    for (const r of rv) insR.run(...r);
-  });
+  // 전부 하나의 묶음으로 실행 → 중간에 실패하면 아무것도 저장되지 않음
+  const stmts = [];
+  for (const [year, revenue] of t) stmts.push(['INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue', [year, revenue]]);
+  for (const x of m) stmts.push(upsertMonthly(x.year, x.month, x.r));
+  if (replaceSalesYears) {
+    for (const y of new Set(s.map((r) => r[0].slice(0, 4)))) stmts.push(['DELETE FROM sales WHERE substr(date,1,4) = ?', [y]]);
+  }
+  for (const r of s) stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', r]);
+  if (replaceReceivables) stmts.push(['DELETE FROM receivables', []]);
+  for (const r of rv) stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', r]);
+  await db.batch(stmts);
   res.json({ ok: true, counts: { targets: t.length, monthly: m.length, sales: s.length, receivables: rv.length } });
 }));
 
@@ -308,28 +313,27 @@ app.use('/api/mgmt', mgmt);
 const admin = express.Router();
 admin.use(requirePerm('admin'));
 
-const adminCount = (exceptId) => db.prepare('SELECT COUNT(*) AS n FROM users WHERE perm_admin = 1 AND active = 1 AND id <> ?').get(exceptId).n;
+const adminCount = async (exceptId) => Number((await db.get('SELECT COUNT(*) AS n FROM users WHERE perm_admin = 1 AND active = 1 AND id <> ?', exceptId)).n);
 
-admin.get('/users', (_req, res) => res.json(db.prepare('SELECT * FROM users ORDER BY active DESC, dept, name').all().map(publicUser)));
+admin.get('/users', wrap(async (req, res) => res.json((await db.all('SELECT * FROM users ORDER BY active DESC, dept, name')).map(publicUser))));
 
-admin.post('/users', wrap((req, res) => {
+admin.post('/users', wrap(async (req, res) => {
   const b = req.body || {};
   const username = str(b.username);
   if (!/^[a-zA-Z0-9._-]{3,30}$/.test(username)) throw new HttpError(400, '아이디는 영문/숫자 3~30자로 입력해 주세요.');
   if (!str(b.name)) throw new HttpError(400, '이름을 입력해 주세요.');
   if (!DEPTS.includes(b.dept)) throw new HttpError(400, '부서를 선택해 주세요.');
   if (String(b.password || '').length < 8) throw new HttpError(400, '초기 비밀번호는 8자 이상이어야 합니다.');
-  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw new HttpError(400, '이미 사용 중인 아이디입니다.');
+  if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) throw new HttpError(400, '이미 사용 중인 아이디입니다.');
   const p = { ...defaultPerms(b.dept), ...(b.perms || {}) };
-  const r = db.prepare(`INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(username, str(b.name), b.dept, hashPassword(b.password), ...PERMS.map((k) => (p[k] ? 1 : 0)));
-  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid)));
+  const r = await db.run(`INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, username, str(b.name), b.dept, hashPassword(b.password), ...PERMS.map((k) => (p[k] ? 1 : 0)));
+  res.json(publicUser(await db.get('SELECT * FROM users WHERE id = ?', r.lastInsertRowid)));
 }));
 
-admin.put('/users/:id', wrap((req, res) => {
+admin.put('/users/:id', wrap(async (req, res) => {
   const id = Number(req.params.id);
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const u = await db.get('SELECT * FROM users WHERE id = ?', id);
   if (!u) throw new HttpError(404, '사용자를 찾을 수 없습니다.');
   const b = req.body || {};
   const name = b.name !== undefined ? str(b.name) : u.name;
@@ -338,22 +342,21 @@ admin.put('/users/:id', wrap((req, res) => {
   if (!DEPTS.includes(dept)) throw new HttpError(400, '부서를 선택해 주세요.');
   const perms = Object.fromEntries(PERMS.map((k) => [k, b.perms && k in b.perms ? (b.perms[k] ? 1 : 0) : u[`perm_${k}`]]));
   const active = b.active !== undefined ? (b.active ? 1 : 0) : u.active;
-  if ((!perms.admin || !active) && u.perm_admin && u.active && adminCount(id) === 0) {
+  if ((!perms.admin || !active) && u.perm_admin && u.active && (await adminCount(id)) === 0) {
     throw new HttpError(400, '마지막 관리자 권한은 해제할 수 없습니다.');
   }
-  db.prepare(`UPDATE users SET name=?, dept=?, perm_mgmt=?, perm_production=?, perm_service=?, perm_admin=?, active=? WHERE id=?`)
-    .run(name, dept, perms.mgmt, perms.production, perms.service, perms.admin, active, id);
-  if (!active) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
-  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)));
+  await db.run(`UPDATE users SET name=?, dept=?, perm_mgmt=?, perm_production=?, perm_service=?, perm_admin=?, active=? WHERE id=?`, name, dept, perms.mgmt, perms.production, perms.service, perms.admin, active, id);
+  if (!active) await db.run('DELETE FROM sessions WHERE user_id = ?', id);
+  res.json(publicUser(await db.get('SELECT * FROM users WHERE id = ?', id)));
 }));
 
-admin.post('/users/:id/reset-password', wrap((req, res) => {
+admin.post('/users/:id/reset-password', wrap(async (req, res) => {
   const id = Number(req.params.id);
   const pw = String(req.body?.password || '');
   if (pw.length < 8) throw new HttpError(400, '비밀번호는 8자 이상이어야 합니다.');
-  const r = db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 1 WHERE id = ?').run(hashPassword(pw), id);
+  const r = await db.run('UPDATE users SET password_hash = ?, must_change_pw = 1 WHERE id = ?', hashPassword(pw), id);
   if (!r.changes) throw new HttpError(404, '사용자를 찾을 수 없습니다.');
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+  await db.run('DELETE FROM sessions WHERE user_id = ?', id);
   res.json({ ok: true });
 }));
 
