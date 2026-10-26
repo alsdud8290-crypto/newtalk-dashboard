@@ -24,28 +24,45 @@ const ROUTES = {
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
 };
 
+// 사이드 메뉴: 단독 항목(item) 또는 아이콘 제목 + 하위 항목(group)
+const ICONS = {
+  dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  mgmt: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h2M14 10h2M8 14h2M14 14h2M8 18h2M14 18h2"/>',
+  production: '<path d="M2 20h20M4 20V10l5 3V10l5 3V6l6 4v10"/>',
+  service: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+  admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+};
+const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+
 const MENU = [
-  { group: '경영지원팀', perm: 'mgmt', items: [
-    ['/dashboard', '경영 현황 대시보드'],
+  { type: 'item', href: '/dashboard', label: '경영 대시보드', icon: 'dashboard', perm: 'mgmt' },
+  { type: 'group', label: '경영지원', icon: 'mgmt', perm: 'mgmt', items: [
     ['/input/monthly', '월별 실적·목표 입력'],
     ['/input/sales', '매출 내역 (판매처)'],
     ['/input/receivables', '미수금 관리'],
     ['/upload', '엑셀 업로드·데이터 이관'],
-    ['/export', '데이터 내보내기 (엑셀·CSV)'],
+    ['/export', '데이터 내보내기'],
   ] },
-  { group: '생산팀', perm: 'production', soon: true, items: [['/production', '생산 현황']] },
-  { group: '서비스팀', perm: 'service', soon: true, items: [['/service', '서비스(A/S) 현황']] },
-  { group: '관리자', perm: 'admin', items: [['/admin/users', '사용자·권한 관리']] },
+  { type: 'item', href: '/production', label: '생산', icon: 'production', perm: 'production', soon: true },
+  { type: 'item', href: '/service', label: '서비스', icon: 'service', perm: 'service', soon: true },
+  { type: 'item', href: '/admin/users', label: '관리자', icon: 'admin', perm: 'admin' },
 ];
 
 const can = (perm) => !!state.user?.perms?.[perm];
 const firstAllowed = () => Object.keys(ROUTES).find((r) => can(ROUTES[r].perm));
 
+const BRAND = `
+  <span class="brand">
+    <img class="mark" src="/img/logo-mark.png" alt="">
+    <img class="word" src="/img/logo-wordmark.png" alt="NEWTORK">
+    <span class="divider"></span><span class="product">경영 대시보드</span>
+  </span>`;
+
 function renderLogin(message = '') {
   root.innerHTML = `
     <div class="login-wrap">
       <form class="login-card" id="login">
-        <div class="brand-mark"><span class="logo">N</span>뉴토크 코리아</div>
+        <img class="login-logo" src="/img/logo-full.png" alt="NEWTORK">
         <h1>경영 대시보드</h1>
         <p>사내 계정으로 로그인해 주세요.</p>
         <div class="field"><label>아이디</label><input class="input" name="username" autocomplete="username" required></div>
@@ -71,36 +88,40 @@ function renderLogin(message = '') {
 
 function renderShell() {
   const u = state.user;
-  const groups = MENU.filter((g) => can(g.perm)).map((g) => `
-    <div class="group">
-      <div class="group-title">${esc(g.group)} ${g.soon ? '<span class="badge">준비 중</span>' : ''}</div>
-      ${g.items.map(([href, label]) => `<a class="item" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
-    </div>`).join('');
-  const apps = [
-    ['/dashboard', '대시보드', 'mgmt'], ['/input/monthly', '데이터 입력', 'mgmt'],
-    ['/upload', '엑셀 업로드', 'mgmt'], ['/admin/users', '관리자', 'admin'],
-  ].filter(([, , p]) => can(p));
+  const soon = (m) => (m.soon ? '<span class="soon">준비 중</span>' : '');
+  const nav = MENU.filter((m) => can(m.perm)).map((m) => (m.type === 'item'
+    ? `<a class="nav-item" href="#${m.href}" data-href="${m.href}">${icon(m.icon)}<span>${esc(m.label)}</span>${soon(m)}</a>`
+    : `<div class="nav-group">
+        <div class="nav-group-title">${icon(m.icon)}<span>${esc(m.label)}</span></div>
+        ${m.items.map(([href, label]) => `<a class="nav-sub" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
+      </div>`)).join('');
   root.innerHTML = `
     <div class="app">
       <header class="gnb">
         <button class="menu-toggle" aria-label="메뉴">☰</button>
-        <a class="brand-mark" href="#/"><span class="logo">N</span>뉴토크 코리아</a>
-        <nav class="gnb-apps">${apps.map(([h, l]) => `<a href="#${h}" data-app="${h}">${l}</a>`).join('')}</nav>
+        <a href="#/" aria-label="홈">${BRAND}</a>
         <div class="spacer"></div>
-        <div class="user">
-          <span class="avatar">${esc(u.name.slice(0, 1))}</span>
-          <span class="uname">${esc(u.name)} · ${esc(u.dept)}</span>
-          <button class="btn sm" id="pw-btn">비밀번호 변경</button>
-          <button class="btn sm" id="logout-btn">로그아웃</button>
+        <div class="user-chip">
+          <button type="button" id="user-btn" aria-haspopup="menu">
+            <span class="avatar">${esc(u.name.slice(0, 1))}</span>
+            <span class="who"><b>${esc(u.name)}</b><span>${esc(u.dept)}</span></span>
+            <span class="caret">▾</span>
+          </button>
+          <div class="user-menu" id="user-menu" role="menu" hidden>
+            <button type="button" id="pw-btn" role="menuitem">비밀번호 변경</button>
+            <button type="button" id="logout-btn" role="menuitem">로그아웃</button>
+          </div>
         </div>
       </header>
       <aside class="lnb">
-        <div class="lnb-title">경영 대시보드</div>
-        ${state.meta?.ephemeralStorage ? '<div class="notice warn" style="margin:0 4px 12px;font-size:12px">⚠ 데이터베이스(Turso)가 연결되지 않아 입력한 데이터가 서버 재시작 시 삭제됩니다. 관리자에게 문의해 주세요.</div>' : ''}
-        ${groups || '<div class="empty">열람 가능한 메뉴가 없습니다.<br>관리자에게 권한을 요청해 주세요.</div>'}
+        ${state.meta?.ephemeralStorage ? '<div class="notice warn lnb-warn">⚠ 데이터베이스(Turso)가 연결되지 않아 입력한 데이터가 서버 재시작 시 삭제됩니다. 관리자에게 문의해 주세요.</div>' : ''}
+        ${nav || '<div class="empty">열람 가능한 메뉴가 없습니다.<br>관리자에게 권한을 요청해 주세요.</div>'}
       </aside>
       <main class="main" id="main"></main>
     </div>`;
+  const menu = root.querySelector('#user-menu');
+  root.querySelector('#user-btn').addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+  document.addEventListener('click', () => { menu.hidden = true; });
   root.querySelector('#logout-btn').addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST' }).catch(() => {});
     state.user = null;
@@ -137,10 +158,9 @@ async function route() {
   if (path !== target && !ROUTES[path]) { location.replace(`#${target}`); return; }
   const r = ROUTES[target];
   const main = document.getElementById('main');
-  root.querySelectorAll('.lnb a.item').forEach((a) => a.classList.toggle('active', a.dataset.href === target));
-  root.querySelectorAll('.gnb-apps a').forEach((a) => a.classList.toggle('active', target.startsWith(a.dataset.app.split('/').slice(0, 2).join('/'))));
+  root.querySelectorAll('.lnb [data-href]').forEach((a) => a.classList.toggle('active', a.dataset.href === target));
   root.querySelector('.app')?.classList.remove('menu-open');
-  document.title = `${r.title} - 뉴토크 코리아 경영 대시보드`;
+  document.title = `${r.title} · NEWTORK 경영 대시보드`;
   if (typeof state.cleanup === 'function') state.cleanup();
   state.cleanup = null;
   if (!can(r.perm)) {

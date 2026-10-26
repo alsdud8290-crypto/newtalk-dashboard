@@ -9,16 +9,24 @@ let currentAi = null;
 
 const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
 const SALES_COLORS = { 제품: SERIES[0], 상품: SERIES[1], 용역: SERIES[2] };
-const COST_COLORS = { '상품 매입': SERIES[6], '원재료 매입': SERIES[3], 경비: SERIES[4], '기타(광고·접대 등)': OTHER };
+const COST_COLORS = { '상품 매입': SERIES[0], '원재료 매입': SERIES[1], 경비: SERIES[2], '기타(광고·접대 등)': SERIES[3] };
 const nextLabel = { month: '다음 달', quarter: '다음 분기', year: '내년', range: '다음 기간' };
 const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
 
 // 증감 표시. 지출처럼 늘면 나쁜 지표는 invert
-function delta(cur, base, label, invert = false) {
-  if (!base) return `<div><span>${esc(label)}</span><span>비교 데이터 없음</span></div>`;
-  const g = cur / base - 1;
-  const good = invert ? g <= 0 : g >= 0;
-  return `<div><span>${esc(label)}</span><span class="delta ${good ? 'up' : 'down'}">${g >= 0 ? '▲' : '▼'} ${pct(Math.abs(g))}</span></div>`;
+// 증감 배지. 지출처럼 늘면 나쁜 지표는 invert. 비교 기준이 0 이하이면 % 대신 금액 차이
+function delta(label, cur, base, invert = false) {
+  if (!base && !cur) return `<div><span>${esc(label)}</span><span class="pill none">-</span></div>`;
+  const diff = cur - base;
+  const good = invert ? diff <= 0 : diff >= 0;
+  const text = base > 0 ? pct(Math.abs(diff / base)) : won(Math.abs(diff));
+  return `<div><span>${esc(label)}</span><span class="pill ${good ? 'up' : 'down'}">${diff >= 0 ? '▲' : '▼'}${text}</span></div>`;
+}
+
+// 큰 숫자 + 작은 단위: "4.82억 원"
+function kv(v) {
+  const t = won(v);
+  return `<div class="k-value num ${v < 0 ? 'neg' : ''}"><span class="kv-num">${esc(t.replace(/원$/, ''))}</span><span class="kv-unit">원</span></div>`;
 }
 
 function paceChip(rate) {
@@ -81,7 +89,7 @@ function query() {
 export async function render(main) {
   main.innerHTML = `
     <div class="page-head">
-      <div><h2>경영 현황 대시보드</h2><div class="sub" id="d-sub"></div></div>
+      <div><h2>경영 대시보드</h2><div class="sub" id="d-sub"></div></div>
       <div class="filters">
         <div class="filters" id="d-filters">${periodControl()}</div>
         <button type="button" class="btn" id="d-img" title="대시보드 전체를 이미지(PNG)로 저장">⬇ 화면 이미지</button>
@@ -122,7 +130,18 @@ export async function render(main) {
   });
   main.querySelector('#d-xlsx').addEventListener('click', () => current && exportNumbers(current));
   // 카드별 [PNG] [CSV] 저장
+  const closeMenus = () => main.querySelectorAll('.dl-pop').forEach((p) => { p.hidden = true; });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.dl-menu')) closeMenus(); });
   main.querySelector('#d-body').addEventListener('click', async (e) => {
+    const toggle = e.target.closest('[data-dl-toggle]');
+    if (toggle) {
+      const pop = toggle.nextElementSibling;
+      const open = pop.hidden;
+      closeMenus();
+      pop.hidden = !open;
+      return;
+    }
+    if (e.target.closest('[data-export]')) closeMenus();
     const btn = e.target.closest('[data-export]');
     if (!btn || !current) return;
     const card = btn.closest('[data-card]');
@@ -167,51 +186,52 @@ async function load(main) {
     ${!s.target ? `<div class="notice warn">${s.year}년 연간 목표매출액이 설정되지 않았습니다. <a href="#/input/monthly">목표 설정하기 →</a></div>` : ''}
 
     <div class="section-block" data-card="kpi">
-    <div class="section-title"><span class="num-badge">1</span>주요 지표 <span class="hint">${esc(s.label)}</span></div>
-    <div class="kpis k4">
+    <div class="section-title"><span class="num-badge">01</span>주요 지표 <span class="hint">${esc(s.label)}</span></div>
+    <div class="kpis">
       <div class="card kpi">
         <div class="k-label">매출</div>
-        <div class="k-value num">${won(cur.sales.total)}</div>
+        ${kv(cur.sales.total)}
+        <div class="k-meta">${s.periodTarget ? `기간 목표 ${won(s.periodTarget)} 대비 <b>${pct(cur.sales.total / s.periodTarget)}</b>` : '목표 미설정'}</div>
         <div class="k-lines">
-          ${s.periodTarget ? `<div><span>기간 목표 ${won(s.periodTarget)} 대비</span><b>${pct(cur.sales.total / s.periodTarget)}</b></div>` : '<div><span>목표 미설정</span></div>'}
-          ${delta(cur.sales.total, s.prev.sales.total, `직전(${s.prevLabel})`)}
-          ${delta(cur.sales.total, s.lastYearSame.sales.total, `전년 동기(${s.lyLabel})`)}
+          ${delta('직전 대비', cur.sales.total, s.prev.sales.total)}
+          ${delta('전년 동기 대비', cur.sales.total, s.lastYearSame.sales.total)}
         </div>
       </div>
       <div class="card kpi">
         <div class="k-label">지출</div>
-        <div class="k-value num">${won(cur.costs.total)}</div>
+        ${kv(cur.costs.total)}
+        <div class="k-meta">상품 매입 + 원재료 매입 + 경비 + 기타 · 매출 대비 <b>${cur.sales.total ? pct(cur.costs.total / cur.sales.total) : '-'}</b></div>
         <div class="k-lines">
-          <div><span>매출 대비</span><b>${cur.sales.total ? pct(cur.costs.total / cur.sales.total) : '-'}</b></div>
-          ${delta(cur.costs.total, s.prev.costs.total, `직전(${s.prevLabel})`, true)}
-          ${delta(cur.costs.total, s.lastYearSame.costs.total, `전년 동기(${s.lyLabel})`, true)}
+          ${delta('직전 대비', cur.costs.total, s.prev.costs.total, true)}
+          ${delta('전년 동기 대비', cur.costs.total, s.lastYearSame.costs.total, true)}
         </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">추정 이익 (매출 − 지출)</div>
-        <div class="k-value num" style="color:${cur.profit < 0 ? 'var(--critical)' : 'inherit'}">${won(cur.profit)}</div>
+        <div class="k-label">추정 이익</div>
+        ${kv(cur.profit)}
+        <div class="k-meta">매출 − 지출 · 이익률 <b>${pct(margin)}</b></div>
         <div class="k-lines">
-          <div><span>이익률</span><b>${pct(margin)}</b></div>
-          ${delta(cur.profit, s.prev.profit > 0 ? s.prev.profit : 0, `직전(${s.prevLabel})`)}
-          ${delta(cur.profit, s.lastYearSame.profit > 0 ? s.lastYearSame.profit : 0, `전년 동기(${s.lyLabel})`)}
+          ${delta('직전 대비', cur.profit, s.prev.profit)}
+          ${delta('전년 동기 대비', cur.profit, s.lastYearSame.profit)}
         </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">미수금 잔액 <span class="hint" style="color:var(--text-3);font-size:11px">(오늘 기준)</span></div>
-        <div class="k-value num">${won(r.outstanding)}</div>
+        <div class="k-label">미수금 <span class="hint">(오늘 기준)</span></div>
+        ${kv(r.outstanding)}
+        <div class="k-meta">미수 ${r.openCount}건 · <a href="#/input/receivables">전체 보기 →</a></div>
         <div class="k-lines">
-          <div><span>미수 ${r.openCount}건</span>${r.aging[3].value > 0 ? `<span class="status-chip critical">90일 초과 ${won(r.aging[3].value)}</span>` : ''}</div>
-          <div><span>결제예정일 경과</span><b style="color:${r.overdueAmount ? 'var(--critical)' : 'inherit'}">${won(r.overdueAmount)} (${r.overdueCount}건)</b></div>
-          <div><span>기간 내 청구 / 수금</span><b>${won(r.period.invoiced)} / ${won(r.period.collected)}</b></div>
+          <div><span>90일 초과</span><b style="color:${r.aging[3].value ? 'var(--critical)' : 'inherit'}">${won(r.aging[3].value)} · ${r.aging[3].count}건</b></div>
+          <div><span>결제예정일 지남</span><b>${won(r.overdueAmount)} · ${r.overdueCount}건</b></div>
         </div>
       </div>
     </div>
+    <div class="hint" style="margin-top:10px">비교 기간 · 직전: ${esc(s.prevLabel)} · 전년 동기: ${esc(s.lyLabel)} · 기간 내 청구 ${won(r.period.invoiced)} / 수금 ${won(r.period.collected)}</div>
     </div>
 
-    <div class="section-title"><span class="num-badge">2</span>현황 분석</div>
+    <div class="section-title"><span class="num-badge">02</span>현황 분석</div>
     ${targetCard(s)}
     <div class="grid g3">
-      <div class="card" data-card="annual">
+      <div class="card accent" data-card="annual">
         <div class="card-head"><h3>${s.year}년 목표매출 달성률</h3>${paceChip(a.paceRate)}</div>
         <div class="donut-box"><canvas id="c-gauge" aria-label="연간 목표매출 달성률"></canvas>
           <div class="donut-center"><div><div class="big num">${s.target ? pct(a.rate) : '-'}</div><div class="small">${s.year}년 목표 대비</div></div></div>
@@ -227,7 +247,7 @@ async function load(main) {
       ${donutCard('c-cost-mix', '지출 구성', '상품 · 원재료 · 경비 · 기타', won(cur.costs.total), s.short)}
     </div>
 
-    <div class="section-title"><span class="num-badge">3</span>추이 및 분석</div>
+    <div class="section-title"><span class="num-badge">03</span>추이 및 분석</div>
     <div class="grid g-trend">
       <div class="card" data-card="trend">
         <div class="card-head"><h3>매출 · 지출 추이</h3><span class="hint">${trendHint(s)}</span></div>
@@ -237,11 +257,11 @@ async function load(main) {
       ${donutCard('c-series', '제품별 매출', s.label, null, s.short)}
     </div>
 
-    <div class="section-title"><span class="num-badge">4</span>AI 분석</div>
+    <div class="section-title"><span class="num-badge">04</span>AI 분석</div>
     <div class="card ai-card" id="ai-card" data-card="ai"></div>`;
 
   // ② 목표 달성 타일 + 원형 그래프
-  charts.push(gauge(body.querySelector('#c-gauge'), a.ytdSales, s.target));
+  charts.push(gauge(body.querySelector('#c-gauge'), a.ytdSales, s.target, { color: '#ffffff', rest: 'rgba(255,255,255,.28)', gap: 'rgba(0,0,0,0)' }));
   quarterStats(s).forEach((x) => { const c = body.querySelector(`#c-q${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
 
   const salesMix = [
@@ -276,29 +296,37 @@ async function load(main) {
   addCardButtons(body);
 }
 
-// 각 카드 제목 오른쪽에 [⬇ PNG] [⬇ CSV] 버튼
+// 카드 머리 정리: 설명(hint)은 제목 아래 작은 줄로, 오른쪽에는 상태 배지 + [⬇] 내려받기 메뉴(PNG/CSV)
 function addCardButtons(root) {
   root.querySelectorAll('[data-card]').forEach((card) => {
     const head = card.querySelector(':scope > .card-head, :scope > .section-title');
-    if (!head || head.querySelector('[data-export]')) return;
+    if (!head || head.querySelector('.dl-menu')) return;
     let tools = head.querySelector(':scope > .card-tools');
     if (!tools) {
       tools = document.createElement('div');
       tools.className = 'card-tools';
-      if (head.classList.contains('card-head')) [...head.children].filter((c) => c.tagName !== 'H3').forEach((c) => tools.append(c));
-      else tools.style.marginLeft = 'auto';
+      if (head.classList.contains('card-head')) {
+        const ttl = document.createElement('div');
+        ttl.className = 'ttl';
+        head.prepend(ttl);
+        [...head.children].forEach((c) => {
+          if (c === ttl) return;
+          if (c.tagName === 'H3' || c.classList.contains('hint')) ttl.append(c);
+          else tools.append(c);
+        });
+      }
       head.append(tools);
     }
-    for (const [kind, label, tip] of [['png', 'PNG', '이미지로 저장'], ['csv', 'CSV', 'CSV 파일로 저장']]) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn sm dl-btn';
-      btn.dataset.export = kind;
-      btn.setAttribute('data-no-export', '');
-      btn.title = tip;
-      btn.textContent = `⬇ ${label}`;
-      tools.append(btn);
-    }
+    const menu = document.createElement('div');
+    menu.className = 'dl-menu';
+    menu.setAttribute('data-no-export', '');
+    menu.innerHTML = `
+      <button type="button" class="btn sm dl-btn" data-dl-toggle title="내려받기" aria-haspopup="menu">⬇</button>
+      <div class="dl-pop" role="menu" hidden>
+        <button type="button" data-export="png" role="menuitem">이미지 (PNG)</button>
+        <button type="button" data-export="csv" role="menuitem">데이터 (CSV)</button>
+      </div>`;
+    tools.append(menu);
   });
 }
 

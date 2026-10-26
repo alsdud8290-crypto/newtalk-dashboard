@@ -1,10 +1,11 @@
 // Chart.js 공통 설정. 색상은 역할(분야·구분)에 고정 — 순위가 바뀌어도 색이 따라가지 않는다.
 import { won, pct, esc } from './core.js';
 
-export const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
-export const OTHER = '#a3a8b0';
-export const REMAIN = '#e6e9ee';
-export const INK = { primary: '#1d2129', secondary: '#4e5560', muted: '#8a919c', grid: '#eef0f3' };
+// NEWTORK 브랜드 기반 분류색 (네이비 → 오렌지 → …). 색각 이상 구분·명도·채도 검사(validate_palette) 통과한 순서
+export const SERIES = ['#2e5aa0', '#e0612f', '#169c8c', '#d7a12a', '#b85c9e', '#6f9b3c', '#8a63d2'];
+export const OTHER = '#b3ada3';
+export const REMAIN = '#ece8e1';
+export const INK = { primary: '#1d2433', secondary: '#565d6b', muted: '#979ba4', grid: '#efebe5' };
 
 export const INDUSTRY_COLORS = {
   상하수도: SERIES[0], 발전소: SERIES[1], 가스: SERIES[2], 오일: SERIES[3],
@@ -109,16 +110,19 @@ export function donut(canvas, legendEl, items, colorOf) {
 }
 
 // 목표 달성 게이지 (달성 / 남은 목표)
-export function gauge(canvas, achieved, target) {
+// opts: 강조 카드(오렌지 배경)에서는 흰 고리 { color, rest, gap }
+export function gauge(canvas, achieved, target, opts = {}) {
   const done = Math.min(achieved, target || achieved);
+  const color = opts.color || SERIES[0];
+  const rest = opts.rest || REMAIN;
   return new Chart(canvas, {
     type: 'doughnut',
     data: {
       labels: ['달성', '남은 목표'],
       datasets: [{
         data: target ? [done, Math.max(0, target - done)] : [1, 0],
-        backgroundColor: [target ? SERIES[0] : REMAIN, REMAIN],
-        borderColor: '#ffffff', borderWidth: 2,
+        backgroundColor: [target ? color : rest, rest],
+        borderColor: opts.gap || '#ffffff', borderWidth: 2, borderRadius: target && done < target ? 6 : 0,
       }],
     },
     options: {
