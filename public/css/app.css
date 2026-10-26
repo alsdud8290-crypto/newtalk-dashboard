@@ -276,3 +276,5 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .q-tile.sel, .m-tile.sel { box-shadow: none; border: 2px solid var(--accent); }
 .q-tile.sel { padding: 13px 15px; }
 .m-tile.sel { padding: 9px 9px 7px; }
+.dl-btn { width: auto; padding: 0 8px; font-size: 12px; height: 26px; }
+.card-tools { margin-left: auto; }

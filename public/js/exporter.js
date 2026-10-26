@@ -70,7 +70,16 @@ export function downloadXlsx(filename, sheets) {
 
 // CSV: 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM을 붙인다. 숫자는 콤마 없이 원값
 export function downloadCsv(filename, sheet) {
-  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(sheet.aoa));
+  // CSV에는 서식이 없으므로 값 자체를 읽기 쉽게: 비율 → 백분율 숫자(85.3) + 열 이름에 (%), 금액 → 원 단위 정수
+  const fmts = sheet.formats || [];
+  const aoa = sheet.aoa.map((row, r) => row.map((v, c) => {
+    if (r === 0) return fmts[c] === '0.0%' ? `${v} (%)` : v;
+    if (typeof v !== 'number') return v;
+    if (fmts[c] === '0.0%') return Math.round(v * 1000) / 10;
+    if (fmts[c] === money) return Math.round(v);
+    return v;
+  }));
+  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(aoa));
   saveBlob(`${filename}.csv`, new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' }));
 }
 

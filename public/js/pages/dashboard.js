@@ -1,10 +1,11 @@
 import { api, esc, won, pct, period, setPeriod, yearOptions, toast } from '../core.js';
 import { donut, gauge, compareBar, hideTooltip, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
-import { downloadXlsx, downloadImage, fileSafe, stamp } from '../exporter.js';
+import { downloadXlsx, downloadCsv, downloadImage, fileSafe, stamp } from '../exporter.js';
 
 let charts = [];
 let loadSeq = 0; // 늦게 도착한 이전 조회 결과는 버린다 (빠른 연속 클릭·화면 이동 대비)
 let current = null; // 화면에 표시 중인 조회 결과 (내보내기용)
+let currentAi = null;
 
 const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
 const SALES_COLORS = { 제품: SERIES[0], 상품: SERIES[1], 용역: SERIES[2] };
@@ -120,13 +121,16 @@ export async function render(main) {
     e.target.disabled = false;
   });
   main.querySelector('#d-xlsx').addEventListener('click', () => current && exportNumbers(current));
-  // 카드별 이미지 저장
+  // 카드별 [PNG] [CSV] 저장
   main.querySelector('#d-body').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-dl]');
+    const btn = e.target.closest('[data-export]');
     if (!btn || !current) return;
-    const target = btn.closest('.card, .section-block');
+    const card = btn.closest('[data-card]');
+    const data = cardData(card.dataset.card, current);
+    const name = fileSafe(`뉴토크코리아_${data.name}_${current.label}_${stamp()}`);
+    if (btn.dataset.export === 'csv') return downloadCsv(name, data);
     btn.disabled = true;
-    await downloadImage(target, fileSafe(`뉴토크코리아_${btn.dataset.dl}_${current.label}_${stamp()}`));
+    await downloadImage(card, name);
     btn.disabled = false;
   });
 
@@ -162,9 +166,8 @@ async function load(main) {
     ${s.salesFromDetailMonths.length ? `<div class="notice">${s.salesFromDetailMonths.join(', ')}은 월별 매출이 입력되지 않아 <b>매출 내역 합계</b>로 표시합니다.</div>` : ''}
     ${!s.target ? `<div class="notice warn">${s.year}년 연간 목표매출액이 설정되지 않았습니다. <a href="#/input/monthly">목표 설정하기 →</a></div>` : ''}
 
-    <div class="section-block">
-    <div class="section-title"><span class="num-badge">1</span>주요 지표 <span class="hint">${esc(s.label)}</span>
-      <button type="button" class="btn sm dl-btn" data-dl="주요지표" data-no-export title="이미지로 저장" style="margin-left:auto">⬇</button></div>
+    <div class="section-block" data-card="kpi">
+    <div class="section-title"><span class="num-badge">1</span>주요 지표 <span class="hint">${esc(s.label)}</span></div>
     <div class="kpis k4">
       <div class="card kpi">
         <div class="k-label">매출</div>
@@ -208,7 +211,7 @@ async function load(main) {
     <div class="section-title"><span class="num-badge">2</span>현황 분석</div>
     ${targetCard(s)}
     <div class="grid g3">
-      <div class="card">
+      <div class="card" data-card="annual">
         <div class="card-head"><h3>${s.year}년 목표매출 달성률</h3>${paceChip(a.paceRate)}</div>
         <div class="donut-box"><canvas id="c-gauge" aria-label="연간 목표매출 달성률"></canvas>
           <div class="donut-center"><div><div class="big num">${s.target ? pct(a.rate) : '-'}</div><div class="small">${s.year}년 목표 대비</div></div></div>
@@ -226,7 +229,7 @@ async function load(main) {
 
     <div class="section-title"><span class="num-badge">3</span>추이 및 분석</div>
     <div class="grid g-trend">
-      <div class="card">
+      <div class="card" data-card="trend">
         <div class="card-head"><h3>매출 · 지출 추이</h3><span class="hint">${trendHint(s)}</span></div>
         <div class="chart-box" style="height:320px"><canvas id="c-trend"></canvas></div>
       </div>
@@ -235,12 +238,11 @@ async function load(main) {
     </div>
 
     <div class="section-title"><span class="num-badge">4</span>AI 분석</div>
-    <div class="card ai-card" id="ai-card"></div>`;
+    <div class="card ai-card" id="ai-card" data-card="ai"></div>`;
 
   // ② 목표 달성 타일 + 원형 그래프
   charts.push(gauge(body.querySelector('#c-gauge'), a.ytdSales, s.target));
   quarterStats(s).forEach((x) => { const c = body.querySelector(`#c-q${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
-  if (showMonthly(s)) monthStats(s).forEach((x) => { const c = body.querySelector(`#c-m${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
 
   const salesMix = [
     { label: '제품', value: cur.sales.product }, { label: '상품', value: cur.sales.goods }, { label: '용역', value: cur.sales.service },
@@ -274,79 +276,107 @@ async function load(main) {
   addCardButtons(body);
 }
 
-// 각 카드 제목 오른쪽에 [⬇] 이미지 저장 버튼
-function addCardButtons(body) {
-  body.querySelectorAll('.card > .card-head').forEach((head) => {
-    if (head.querySelector('[data-dl]')) return;
-    const title = head.querySelector('h3')?.textContent.trim() || '그래프';
-    const tools = document.createElement('div');
-    tools.className = 'card-tools';
-    [...head.children].filter((c) => c.tagName !== 'H3').forEach((c) => tools.append(c));
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn sm dl-btn';
-    btn.dataset.dl = title.replace(/^(AI 분석 코멘트) · .*$/, '$1'); // AI 제목 뒤의 기간은 파일명에 따로 붙으므로 제거
-    btn.setAttribute('data-no-export', '');
-    btn.title = '이미지로 저장';
-    btn.textContent = '⬇';
-    tools.append(btn);
-    head.append(tools);
+// 각 카드 제목 오른쪽에 [⬇ PNG] [⬇ CSV] 버튼
+function addCardButtons(root) {
+  root.querySelectorAll('[data-card]').forEach((card) => {
+    const head = card.querySelector(':scope > .card-head, :scope > .section-title');
+    if (!head || head.querySelector('[data-export]')) return;
+    let tools = head.querySelector(':scope > .card-tools');
+    if (!tools) {
+      tools = document.createElement('div');
+      tools.className = 'card-tools';
+      if (head.classList.contains('card-head')) [...head.children].filter((c) => c.tagName !== 'H3').forEach((c) => tools.append(c));
+      else tools.style.marginLeft = 'auto';
+      head.append(tools);
+    }
+    for (const [kind, label, tip] of [['png', 'PNG', '이미지로 저장'], ['csv', 'CSV', 'CSV 파일로 저장']]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn sm dl-btn';
+      btn.dataset.export = kind;
+      btn.setAttribute('data-no-export', '');
+      btn.title = tip;
+      btn.textContent = `⬇ ${label}`;
+      tools.append(btn);
+    }
   });
 }
 
-// 대시보드 수치를 시트별로 엑셀에 담기
-function exportNumbers(s) {
-  const M = '#,##0';
-  const P = '0.0%';
+const M = '#,##0';
+const P = '0.0%';
+const stateName = { done: '완료', running: '진행 중', future: '예정' };
+const share = (list) => {
+  const total = list.reduce((t, x) => t + x.value, 0);
+  return list.map((x) => [x.label, x.value, total ? x.value / total : 0]);
+};
+
+// 카드별 표 데이터 { name, aoa, formats } — 카드 CSV와 "수치 엑셀"이 같은 정의를 쓴다
+function cardData(key, s) {
   const c = s.current;
-  const kpiRows = [
-    ['매출', c.sales.total, s.prev.sales.total, s.lastYearSame.sales.total],
-    ['  제품 매출', c.sales.product, s.prev.sales.product, s.lastYearSame.sales.product],
-    ['  상품 매출', c.sales.goods, s.prev.sales.goods, s.lastYearSame.sales.goods],
-    ['  용역 매출', c.sales.service, s.prev.sales.service, s.lastYearSame.sales.service],
-    ['지출', c.costs.total, s.prev.costs.total, s.lastYearSame.costs.total],
-    ['  상품 매입', c.costs.productPurchase, s.prev.costs.productPurchase, s.lastYearSame.costs.productPurchase],
-    ['  원재료 매입', c.costs.materialPurchase, s.prev.costs.materialPurchase, s.lastYearSame.costs.materialPurchase],
-    ['  경비', c.costs.expense, s.prev.costs.expense, s.lastYearSame.costs.expense],
-    ['  광고선전비', c.costs.adExpense, s.prev.costs.adExpense, s.lastYearSame.costs.adExpense],
-    ['  접대비', c.costs.entertainmentExpense, s.prev.costs.entertainmentExpense, s.lastYearSame.costs.entertainmentExpense],
-    ['  그 외 지출', c.costs.otherExpense, s.prev.costs.otherExpense, s.lastYearSame.costs.otherExpense],
-    ['추정 이익 (매출−지출)', c.profit, s.prev.profit, s.lastYearSame.profit],
-    ['기간 목표 매출', s.periodTarget, '', ''],
-  ];
   const r = s.receivables;
-  const share = (list) => {
-    const total = list.reduce((t, x) => t + x.value, 0);
-    return list.map((x) => [x.label, x.value, total ? x.value / total : 0]);
-  };
-  const stateName = { done: '완료', running: '진행 중', future: '예정' };
-  const sheets = [
-    { name: '주요지표', aoa: [['항목', s.label, `직전 (${s.prevLabel})`, `전년 동기 (${s.lyLabel})`], ...kpiRows], formats: [null, M, M, M] },
-    {
-      name: '미수금',
-      aoa: [['항목', '금액', '건수'], ['미수금 잔액 (오늘 기준)', r.outstanding, r.openCount], ['결제예정일 경과', r.overdueAmount, r.overdueCount],
-        ...r.aging.map((a) => [`경과 ${a.label}`, a.value, a.count]), ['기간 내 청구액', r.period.invoiced, ''], ['기간 내 수금액', r.period.collected, '']],
-      formats: [null, M, null],
-    },
-    {
-      name: '분기별 목표달성',
+  const a = s.achievement;
+  const cmp = (label, f) => [label, f(c), f(s.prev), f(s.lastYearSame)];
+  switch (key) {
+    case 'kpi': return {
+      name: '주요지표',
+      aoa: [
+        ['항목', s.label, `직전 (${s.prevLabel})`, `전년 동기 (${s.lyLabel})`],
+        cmp('매출', (x) => x.sales.total), cmp('지출', (x) => x.costs.total), cmp('추정 이익 (매출−지출)', (x) => x.profit),
+        ['기간 목표 매출', s.periodTarget, '', ''],
+        ['미수금 잔액 (오늘 기준)', r.outstanding, '', ''], ['미수 건수', r.openCount, '', ''],
+        ['90일 초과 미수금', r.aging[3].value, '', ''], ['결제예정일 경과 금액', r.overdueAmount, '', ''],
+        ['기간 내 청구액', r.period.invoiced, '', ''], ['기간 내 수금액', r.period.collected, '', ''],
+      ],
+      formats: [null, M, M, M],
+    };
+    case 'quarter': return {
+      name: `${s.year}년 분기별 목표달성`,
       aoa: [['분기', '목표', '실적', '달성률', '상태'], ...quarterStats(s).map((x) => [`${x.key}분기`, x.target, x.sales, x.state === 'future' ? '' : x.rate, stateName[x.state]])],
       formats: [null, M, M, P, null],
-    },
-    {
-      name: '월별 목표달성',
-      aoa: [['월', '목표', '실적', '달성률', '상태'], ...monthStats(s).map((x) => [`${x.key}월`, x.target, x.sales, x.state === 'future' ? '' : x.rate, stateName[x.state]])],
-      formats: [null, M, M, P, null],
-    },
-    {
+    };
+    case 'annual': return {
+      name: `${s.year}년 목표매출 달성률`,
+      // 금액과 비율은 열을 나눠 담는다 (CSV·엑셀 서식이 열 단위라서)
+      aoa: [['항목', '금액', '비율', '설명'],
+        ['연간 목표', s.target, '', ''],
+        [`누적 매출 (~${a.endMonth}월)`, a.ytdSales, a.rate ?? '', '비율 = 달성률 (누적 매출 ÷ 연간 목표)'],
+        [`경과 기간 기준 기대치 (${a.monthsElapsed.toFixed(1)}개월)`, a.expectedToDate, a.paceRate ?? '', '비율 = 진도율 (누적 매출 ÷ 기대치)'],
+        [`남은 목표 (${a.monthsLeft}개월)`, a.remaining, '', '']],
+      formats: [null, M, P, null],
+    };
+    case 'c-sales-mix': return {
+      name: '매출 구성', aoa: [['구분', '매출', '비중'], ...share([{ label: '제품', value: c.sales.product }, { label: '상품', value: c.sales.goods }, { label: '용역', value: c.sales.service }])], formats: [null, M, P],
+    };
+    case 'c-cost-mix': return {
+      name: '지출 구성',
+      aoa: [['구분', '지출', '비중'], ...share([{ label: '상품 매입', value: c.costs.productPurchase }, { label: '원재료 매입', value: c.costs.materialPurchase },
+        { label: '경비', value: c.costs.expense }, { label: '광고선전비', value: c.costs.adExpense }, { label: '접대비', value: c.costs.entertainmentExpense },
+        { label: '그 외 지출', value: c.costs.otherExpense }])],
+      formats: [null, M, P],
+    };
+    case 'trend': return {
       name: '매출·지출 추이',
       aoa: [['기간', '매출', '지출', '추정 이익', '목표 매출'], ...s.buckets.map((b) => [b.label, b.sales.total, b.costs.total, b.profit, b.target])],
       formats: [null, M, M, M, M],
-    },
-    { name: '산업 분야별 매출', aoa: [['산업 분야', '매출', '비중'], ...share(s.industry)], formats: [null, M, P] },
-    { name: '제품별 매출', aoa: [['제품 시리즈', '매출', '비중'], ...share(s.series)], formats: [null, M, P] },
-  ];
-  sheets.forEach((sh) => { if (!sh.formats) sh.formats = []; });
+    };
+    case 'c-industry': return { name: '산업 분야별 매출', aoa: [['산업 분야', '매출', '비중'], ...share(s.industry)], formats: [null, M, P] };
+    case 'c-series': return { name: '제품별 매출', aoa: [['제품 시리즈', '매출', '비중'], ...share(s.series)], formats: [null, M, P] };
+    case 'ai': {
+      const ai = currentAi;
+      const rows = ai ? [['요약', ai.headline], ...(ai.status || []).map((t) => ['이번 기간 현황', t]),
+        ...(ai.shortfalls || []).map((t) => ['부족한 점·주의', t]), ...(ai.nextActions || []).map((t) => ['개선할 점', t]),
+        ['작성', `${ai.source === 'claude' ? 'Claude AI' : '규칙 기반 자동 요약'} · ${ai.createdAt}`]] : [['안내', '아직 분석이 없습니다.']];
+      return { name: 'AI 분석 코멘트', aoa: [['구분', '내용'], ...rows], formats: [] };
+    }
+    default: return { name: key, aoa: [['데이터 없음']], formats: [] };
+  }
+}
+
+const CARD_KEYS = ['kpi', 'quarter', 'annual', 'c-sales-mix', 'c-cost-mix', 'trend', 'c-industry', 'c-series', 'ai'];
+
+// 대시보드 수치 엑셀: 카드별 표를 시트로
+function exportNumbers(s) {
+  const sheets = CARD_KEYS.filter((k) => k !== 'quarter' || s.target).map((k) => cardData(k, s));
   downloadXlsx(fileSafe(`뉴토크코리아_대시보드수치_${s.label}_${stamp()}`), [
     { name: '조회조건', aoa: [['조회 기간', s.label], ['기간', `${s.from} ~ ${s.to}`], [`${s.year}년 연간 목표`, s.target], ['내려받은 날짜', stamp()]], formats: [null, M] },
     ...sheets,
@@ -361,7 +391,7 @@ function trendHint(s) {
 
 function donutCard(id, title, hint, total, scope) {
   return `
-    <div class="card">
+    <div class="card" data-card="${id}">
       <div class="card-head"><h3>${esc(title)}</h3><span class="hint">${esc(hint)}</span></div>
       <div class="donut-box"><canvas id="${id}" aria-label="${esc(title)}"></canvas>
         <div class="donut-center"><div><div class="big num" style="font-size:18px" id="t-${id}">${total ?? ''}</div><div class="small">${esc(scope)}</div></div></div>
@@ -394,12 +424,6 @@ function quarterStats(s) {
   });
 }
 
-function monthStats(s) {
-  return s.yearMonths.map((m) => ({ ...stat(m.month, m.sales.total, s.target / 12, m.month, 1, s.yearElapsed), selected: m.selected }));
-}
-
-const showMonthly = (s) => s.mode === 'month' || s.mode === 'range';
-
 function statusChip(x) {
   if (x.state === 'future') return '<span class="badge">예정</span>';
   if (x.rate >= 1) return '<span class="status-chip good">✓ 달성</span>';
@@ -425,33 +449,16 @@ function targetCard(s) {
       </div>`;
   }).join('');
 
-  let monthly = '';
-  if (showMonthly(s)) {
-    const mark = (x) => (x.state === 'future' ? '<span class="m-mark none">예정</span>'
-      : x.rate >= 1 ? '<span class="m-mark good">✓ 달성</span>'
-        : x.state === 'running' ? '<span class="m-mark warn">진행 중</span>' : '<span class="m-mark bad">▼ 미달</span>');
-    monthly = `
-      <div class="sub-head"><h4>${s.year}년 월별 목표 달성 현황</h4><span class="hint" style="color:var(--text-3);font-size:12px">월 목표 = 연간 목표 ÷ 12 = ${won(s.target / 12)}</span></div>
-      <div class="m-grid">${monthStats(s).map((x) => `
-        <div class="m-tile ${x.selected ? 'sel' : ''}">
-          <div class="m-head"><span>${x.key}월</span>${mark(x)}</div>
-          <div class="m-donut"><canvas id="c-m${x.key}" aria-label="${x.key}월 목표 달성률"></canvas>
-            <div class="donut-center"><div class="big num">${x.state === 'future' ? '-' : pct(x.rate, 0)}</div></div>
-          </div>
-          <div class="m-val">${won(x.sales)}</div>
-        </div>`).join('')}
-      </div>`;
-  }
   return `
-    <div class="card" style="margin-bottom:16px">
+    <div class="card" style="margin-bottom:16px" data-card="quarter">
       <div class="card-head"><h3>${s.year}년 분기별 목표 달성 현황</h3><span class="hint">분기 목표 = 연간 목표 ${won(s.target)} ÷ 4</span></div>
       <div class="q-grid">${quarters}</div>
-      ${monthly}
     </div>`;
 }
 
 // ---------- ④ AI 분석 ----------
 function renderAi(el, s, ai) {
+  currentAi = ai;
   const list = (items, empty) => (items?.length ? `<ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : `<div class="ai-meta">${empty}</div>`);
   el.innerHTML = `
     <div class="card-head">
@@ -469,6 +476,7 @@ function renderAi(el, s, ai) {
         <div><h4><span class="dot" style="background:var(--good)"></span>${nextLabel[s.mode]} 개선할 점</h4>${list(ai.nextActions, '-')}</div>
       </div>`
     : '<div class="ai-meta">아직 분석이 없습니다. [분석 생성]을 누르면 이 기간의 매출 상황, 부족한 점, 다음 기간 개선점을 요약합니다.</div>'}`;
+  addCardButtons(el.parentElement);
   el.querySelector('#ai-gen').addEventListener('click', async (e) => {
     e.target.disabled = true;
     e.target.textContent = '분석 중…';
