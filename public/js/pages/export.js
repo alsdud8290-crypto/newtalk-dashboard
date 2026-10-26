@@ -1,5 +1,5 @@
 import { api, esc, toast } from '../core.js';
-import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, stamp } from '../exporter.js';
+import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, downloadCsvZip, stamp } from '../exporter.js';
 
 const KEYS = ['targets', 'monthly', 'sales', 'receivables'];
 const DESC = {
@@ -28,8 +28,11 @@ export async function render(main, ctx) {
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><h3>한 번에 받기</h3></div>
-      <button class="btn primary" id="x-all">⬇ 전체 데이터 엑셀 (시트 4개)</button>
-      <span class="hint" style="color:var(--text-3);margin-left:8px" id="x-count"></span>
+      <div class="filters">
+        <button class="btn primary" id="x-all">⬇ 전체 데이터 엑셀 (시트 4개)</button>
+        <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ 전체 데이터 CSV (ZIP · 파일 4개)</button>
+      </div>
+      <div class="hint" style="margin-top:10px" id="x-count"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>항목별로 받기</h3><span class="hint">CSV는 한 파일에 표 하나만 담기므로 항목별로 받습니다</span></div>
@@ -56,6 +59,14 @@ export async function render(main, ctx) {
     if (!data) return;
     downloadXlsx(`뉴토크코리아_경영데이터_${scopeName()}_${stamp()}`, KEYS.map((k) => datasetSheet(k, data[k])));
     toast('엑셀 파일을 내려받았습니다.');
+  });
+  main.querySelector('#x-all-csv').addEventListener('click', async (e) => {
+    if (!data) return;
+    e.target.disabled = true;
+    await downloadCsvZip(`뉴토크코리아_경영데이터_CSV_${scopeName()}_${stamp()}`,
+      KEYS.map((k) => ({ name: `${DATASETS[k].sheet}_${scopeName()}`, sheet: datasetSheet(k, data[k]) })));
+    e.target.disabled = false;
+    toast('CSV 파일 4개를 ZIP으로 내려받았습니다.');
   });
   main.querySelector('tbody').addEventListener('click', (e) => {
     const k = e.target.dataset.x;

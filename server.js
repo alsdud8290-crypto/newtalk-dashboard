@@ -45,6 +45,7 @@ app.use('/vendor/chart.js', express.static(path.join(here, 'node_modules/chart.j
 app.use('/vendor/xlsx', express.static(path.join(here, 'node_modules/xlsx/dist')));
 app.use('/vendor/html2canvas', express.static(path.join(here, 'node_modules/html2canvas/dist')));
 app.use('/vendor/pretendard', express.static(path.join(here, 'node_modules/pretendard/dist/web/variable')));
+app.use('/vendor/jszip', express.static(path.join(here, 'node_modules/jszip/dist')));
 
 // ---------- 공통 ----------
 class HttpError extends Error {

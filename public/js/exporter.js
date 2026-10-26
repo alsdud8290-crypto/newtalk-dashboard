@@ -69,8 +69,8 @@ export function downloadXlsx(filename, sheets) {
 }
 
 // CSV: 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM을 붙인다. 숫자는 콤마 없이 원값
-export function downloadCsv(filename, sheet) {
-  // CSV에는 서식이 없으므로 값 자체를 읽기 쉽게: 비율 → 백분율 숫자(85.3) + 열 이름에 (%), 금액 → 원 단위 정수
+// CSV 본문. 서식이 없으므로 값 자체를 읽기 쉽게: 비율 → 백분율 숫자(85.3) + 열 이름에 (%), 금액 → 원 단위 정수
+function csvText(sheet) {
   const fmts = sheet.formats || [];
   const aoa = sheet.aoa.map((row, r) => row.map((v, c) => {
     if (r === 0) return fmts[c] === '0.0%' ? `${v} (%)` : v;
@@ -79,8 +79,20 @@ export function downloadCsv(filename, sheet) {
     if (fmts[c] === money) return Math.round(v);
     return v;
   }));
-  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(aoa));
-  saveBlob(`${filename}.csv`, new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' }));
+  // 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM
+  return '\ufeff' + XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(aoa));
+}
+
+export function downloadCsv(filename, sheet) {
+  saveBlob(`${filename}.csv`, new Blob([csvText(sheet)], { type: 'text/csv;charset=utf-8' }));
+}
+
+// 여러 표를 CSV 파일 여러 개로 → ZIP 하나에 담아 내려받기 (files: [{ name, sheet }])
+export async function downloadCsvZip(filename, files) {
+  if (!window.JSZip) return toast('ZIP 기능을 불러오지 못했습니다.', true);
+  const zip = new JSZip();
+  for (const f of files) zip.file(`${f.name}.csv`, csvText(f.sheet));
+  saveBlob(`${filename}.zip`, await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
 }
 
 export function saveBlob(filename, blob) {
