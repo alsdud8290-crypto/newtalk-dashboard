@@ -1,13 +1,21 @@
 import { api, esc, won, pct, period, setPeriod, yearOptions, toast } from '../core.js';
-import { donut, gauge, stackedBar, hbar, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
+import { donut, gauge, compareBar, hideTooltip, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
 
 let charts = [];
-let scope = 'period'; // 산업분야·시리즈 도넛 범위: period(선택 기간) | year(연간 누적)
+let loadSeq = 0; // 늦게 도착한 이전 조회 결과는 버린다 (빠른 연속 클릭·화면 이동 대비)
 
-function delta(cur, base, label) {
-  if (!base) return `<span>${esc(label)} 데이터 없음</span>`;
+const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
+const SALES_COLORS = { 제품: SERIES[0], 상품: SERIES[1], 용역: SERIES[2] };
+const COST_COLORS = { '상품 매입': SERIES[6], '원재료 매입': SERIES[3], 경비: SERIES[4], '기타(광고·접대 등)': OTHER };
+const nextLabel = { month: '다음 달', quarter: '다음 분기', year: '내년', range: '다음 기간' };
+const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+
+// 증감 표시. 지출처럼 늘면 나쁜 지표는 invert
+function delta(cur, base, label, invert = false) {
+  if (!base) return `<div><span>${esc(label)}</span><span>비교 데이터 없음</span></div>`;
   const g = cur / base - 1;
-  return `<span class="delta ${g >= 0 ? 'up' : 'down'}">${g >= 0 ? '▲' : '▼'} ${pct(Math.abs(g))}</span><span>${esc(label)} 대비</span>`;
+  const good = invert ? g <= 0 : g >= 0;
+  return `<div><span>${esc(label)}</span><span class="delta ${good ? 'up' : 'down'}">${g >= 0 ? '▲' : '▼'} ${pct(Math.abs(g))}</span></div>`;
 }
 
 function paceChip(rate) {
@@ -17,228 +25,291 @@ function paceChip(rate) {
   return '<span class="status-chip critical">▼ 목표 페이스 미달</span>';
 }
 
-function periodSelect() {
+// ---------- 조회 조건 ----------
+function periodControl() {
   const n = period.mode === 'month' ? 12 : 4;
-  return Array.from({ length: n }, (_, i) => i + 1)
+  const opts = Array.from({ length: n }, (_, i) => i + 1)
     .map((p) => `<option value="${p}" ${p === period.period ? 'selected' : ''}>${p}${period.mode === 'month' ? '월' : '분기'}</option>`).join('');
+  return `
+    <select class="input" id="f-year" ${period.mode === 'range' ? 'hidden' : ''}>${yearOptions(period.year)}</select>
+    <div class="seg" id="f-mode">${MODES.map(([m, l]) => `<button type="button" data-mode="${m}" class="${period.mode === m ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <select class="input" id="f-period" ${['month', 'quarter'].includes(period.mode) ? '' : 'hidden'}>${opts}</select>
+    <span id="f-range" class="filters" ${period.mode === 'range' ? '' : 'hidden'}>
+      <input class="input" type="month" id="f-from" value="${esc(period.from)}" aria-label="시작월">
+      <span class="range-sep">~</span>
+      <input class="input" type="month" id="f-to" value="${esc(period.to)}" aria-label="종료월">
+      <button type="button" class="btn primary" id="f-go">조회</button>
+    </span>`;
 }
 
-export async function render(main, ctx) {
+// 단위를 바꿔도 같은 시점을 유지
+function switchMode(mode) {
+  const now = new Date();
+  const curY = now.getFullYear();
+  const curM = now.getMonth() + 1;
+  const toY = Number(period.to.slice(0, 4));
+  const toM = Number(period.to.slice(5, 7));
+  let { year } = period;
+  let refMonth;
+  if (period.mode === 'month') refMonth = period.period;
+  else if (period.mode === 'quarter') refMonth = period.period * 3;
+  else if (period.mode === 'year') refMonth = year === curY ? curM : 12;
+  else { year = toY; refMonth = toM; }
+  if (year === curY) refMonth = Math.min(refMonth, curM);
+
+  const next = { mode, year };
+  if (mode === 'month') next.period = refMonth;
+  if (mode === 'quarter') next.period = Math.ceil(refMonth / 3);
+  if (mode === 'range') {
+    if (period.mode === 'month') Object.assign(next, { from: ym(year, period.period), to: ym(year, period.period) });
+    else if (period.mode === 'quarter') Object.assign(next, { from: ym(year, period.period * 3 - 2), to: ym(year, period.period * 3) });
+    else if (period.mode === 'year') Object.assign(next, { from: ym(year, 1), to: ym(year, year === curY ? curM : 12) });
+  }
+  setPeriod(next);
+}
+
+function query() {
+  const p = period;
+  if (p.mode === 'range') return `mode=range&from=${p.from}&to=${p.to}`;
+  if (p.mode === 'year') return `mode=year&year=${p.year}`;
+  return `mode=${p.mode}&year=${p.year}&period=${p.period}`;
+}
+
+export async function render(main) {
   main.innerHTML = `
     <div class="page-head">
       <div><h2>경영 현황 대시보드</h2><div class="sub" id="d-sub"></div></div>
-      <div class="filters">
-        <select class="input" id="f-year">${yearOptions(period.year, ctx.meta.years)}</select>
-        <div class="seg" id="f-mode">
-          <button type="button" data-mode="quarter" class="${period.mode === 'quarter' ? 'on' : ''}">분기</button>
-          <button type="button" data-mode="month" class="${period.mode === 'month' ? 'on' : ''}">월</button>
-        </div>
-        <select class="input" id="f-period">${periodSelect()}</select>
-      </div>
+      <div class="filters" id="d-filters">${periodControl()}</div>
     </div>
     <div id="d-body"><div class="empty">불러오는 중…</div></div>`;
 
-  const reload = () => load(main);
-  main.querySelector('#f-year').addEventListener('change', (e) => { setPeriod({ year: Number(e.target.value) }); reload(); });
-  main.querySelector('#f-period').addEventListener('change', (e) => { setPeriod({ period: Number(e.target.value) }); reload(); });
-  main.querySelector('#f-mode').addEventListener('click', (e) => {
-    const mode = e.target.dataset.mode;
-    if (!mode || mode === period.mode) return;
-    // 분기 ↔ 월 전환 시 같은 시점을 유지
-    const p = mode === 'month' ? (period.period - 1) * 3 + 3 : Math.ceil(period.period / 3);
-    const nowY = new Date().getFullYear();
-    const curMonth = new Date().getMonth() + 1;
-    setPeriod({ mode, period: mode === 'month' && period.year === nowY ? Math.min(p, curMonth) : p });
-    main.querySelectorAll('#f-mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
-    main.querySelector('#f-period').innerHTML = periodSelect();
-    reload();
-  });
+  const filters = main.querySelector('#d-filters');
+  const redraw = () => { filters.innerHTML = periodControl(); bind(); load(main); };
+  function bind() {
+    filters.querySelector('#f-year').addEventListener('change', (e) => { setPeriod({ year: Number(e.target.value) }); load(main); });
+    filters.querySelector('#f-period').addEventListener('change', (e) => { setPeriod({ period: Number(e.target.value) }); load(main); });
+    filters.querySelector('#f-mode').addEventListener('click', (e) => {
+      const mode = e.target.dataset.mode;
+      if (!mode || mode === period.mode) return;
+      switchMode(mode);
+      redraw();
+    });
+    const go = () => {
+      const from = filters.querySelector('#f-from').value;
+      const to = filters.querySelector('#f-to').value;
+      if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) return toast('시작월과 종료월을 YYYY-MM 형식으로 입력해 주세요.', true);
+      if (from > to) return toast('시작월이 종료월보다 늦습니다.', true);
+      setPeriod({ from, to, year: Number(to.slice(0, 4)) });
+      load(main);
+    };
+    filters.querySelector('#f-go').addEventListener('click', go);
+    filters.querySelectorAll('#f-from, #f-to').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); }));
+  }
+  bind();
 
   await load(main);
-  return () => { charts.forEach((c) => c.destroy()); charts = []; };
+  return () => { loadSeq += 1; hideTooltip(); charts.forEach((c) => c.destroy()); charts = []; };
 }
 
 async function load(main) {
-  const q = `year=${period.year}&mode=${period.mode}&period=${period.period}`;
-  const [s, ai] = await Promise.all([api(`/api/mgmt/summary?${q}`), api(`/api/mgmt/ai-comment?${q}`)]);
+  const q = query();
+  const seq = ++loadSeq;
+  let s;
+  let ai;
+  try {
+    [s, ai] = await Promise.all([api(`/api/mgmt/summary?${q}`), api(`/api/mgmt/ai-comment?${q}`)]);
+  } catch (err) {
+    if (seq === loadSeq) toast(err.message, true);
+    return;
+  }
+  if (seq !== loadSeq || !main.isConnected) return;
+  hideTooltip();
   charts.forEach((c) => c.destroy());
   charts = [];
   main.querySelector('#d-sub').textContent = `${s.label} 기준 · 금액 단위 원 (표시는 만원/억원)`;
 
-  const now = new Date();
-  const endMonth = s.mode === 'month' ? s.period : s.period * 3;
-  const refMonth = s.mode === 'month' ? s.period
-    : (s.year === now.getFullYear() ? Math.min(endMonth, Math.max(endMonth - 2, now.getMonth() + 1)) : endMonth);
-  const refQuarter = Math.ceil(refMonth / 3);
-  const mCur = s.months[refMonth - 1];
-  const mPrev = refMonth > 1 ? s.months[refMonth - 2] : null;
-  const qSales = s.months.slice((refQuarter - 1) * 3, refQuarter * 3).reduce((a, m) => a + m.sales.total, 0);
-  const qTarget = s.target / 4;
-  const a = s.achievement;
-  const r = s.receivables;
-
   const body = main.querySelector('#d-body');
+  const cur = s.current;
+  const r = s.receivables;
+  const a = s.achievement;
+  const margin = cur.sales.total ? cur.profit / cur.sales.total : null;
+
   body.innerHTML = `
-    ${s.salesFromDetailMonths.length ? `<div class="notice">${s.salesFromDetailMonths.join(', ')}월은 월별 매출이 입력되지 않아 <b>매출 내역 합계</b>로 표시합니다.</div>` : ''}
+    ${s.salesFromDetailMonths.length ? `<div class="notice">${s.salesFromDetailMonths.join(', ')}은 월별 매출이 입력되지 않아 <b>매출 내역 합계</b>로 표시합니다.</div>` : ''}
     ${!s.target ? `<div class="notice warn">${s.year}년 연간 목표매출액이 설정되지 않았습니다. <a href="#/input/monthly">목표 설정하기 →</a></div>` : ''}
 
-    <div class="kpis">
+    <div class="section-title"><span class="num-badge">1</span>주요 지표 <span class="hint">${esc(s.label)}</span></div>
+    <div class="kpis k4">
       <div class="card kpi">
-        <div class="k-label">당월 매출 (${refMonth}월)</div>
-        <div class="k-value num">${won(mCur.sales.total)}</div>
-        <div class="k-sub">${!mCur.sales.total ? '<span>아직 입력되지 않음</span>' : mPrev ? delta(mCur.sales.total, mPrev.sales.total, `${refMonth - 1}월`) : '<span>1월</span>'}</div>
+        <div class="k-label">매출</div>
+        <div class="k-value num">${won(cur.sales.total)}</div>
+        <div class="k-lines">
+          ${s.periodTarget ? `<div><span>기간 목표 ${won(s.periodTarget)} 대비</span><b>${pct(cur.sales.total / s.periodTarget)}</b></div>` : '<div><span>목표 미설정</span></div>'}
+          ${delta(cur.sales.total, s.prev.sales.total, `직전(${s.prevLabel})`)}
+          ${delta(cur.sales.total, s.lastYearSame.sales.total, `전년 동기(${s.lyLabel})`)}
+        </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">분기 매출 (${refQuarter}분기)</div>
-        <div class="k-value num">${won(qSales)}</div>
-        <div class="k-sub">${s.target ? `<span>분기 목표 ${won(qTarget)} 대비</span><b>${pct(qSales / qTarget)}</b>` : '<span>목표 미설정</span>'}</div>
+        <div class="k-label">지출</div>
+        <div class="k-value num">${won(cur.costs.total)}</div>
+        <div class="k-lines">
+          <div><span>매출 대비</span><b>${cur.sales.total ? pct(cur.costs.total / cur.sales.total) : '-'}</b></div>
+          ${delta(cur.costs.total, s.prev.costs.total, `직전(${s.prevLabel})`, true)}
+          ${delta(cur.costs.total, s.lastYearSame.costs.total, `전년 동기(${s.lyLabel})`, true)}
+        </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">연간 누적 매출 (~${endMonth}월)</div>
-        <div class="k-value num">${won(a.ytdSales)}</div>
-        <div class="k-sub">${s.target ? `<span>연간 목표 대비</span><b>${pct(a.rate)}</b>` : '<span>목표 미설정</span>'}</div>
+        <div class="k-label">추정 이익 (매출 − 지출)</div>
+        <div class="k-value num" style="color:${cur.profit < 0 ? 'var(--critical)' : 'inherit'}">${won(cur.profit)}</div>
+        <div class="k-lines">
+          <div><span>이익률</span><b>${pct(margin)}</b></div>
+          ${delta(cur.profit, s.prev.profit > 0 ? s.prev.profit : 0, `직전(${s.prevLabel})`)}
+          ${delta(cur.profit, s.lastYearSame.profit > 0 ? s.lastYearSame.profit : 0, `전년 동기(${s.lyLabel})`)}
+        </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">매입·경비 (${esc(s.label.replace(`${s.year}년 `, ''))})</div>
-        <div class="k-value num">${won(s.current.costs.total)}</div>
-        <div class="k-sub"><span>추정 손익</span><span class="delta ${s.current.profit >= 0 ? 'up' : 'down'}">${won(s.current.profit)}</span></div>
-      </div>
-      <div class="card kpi">
-        <div class="k-label">미수금 잔액</div>
+        <div class="k-label">미수금 잔액 <span class="hint" style="color:var(--text-3);font-size:11px">(오늘 기준)</span></div>
         <div class="k-value num">${won(r.outstanding)}</div>
-        <div class="k-sub">${r.aging[3].value > 0 ? `<span class="status-chip critical">90일 초과 ${won(r.aging[3].value)}</span>` : `<span>${r.openCount}건</span>`}</div>
+        <div class="k-lines">
+          <div><span>미수 ${r.openCount}건</span>${r.aging[3].value > 0 ? `<span class="status-chip critical">90일 초과 ${won(r.aging[3].value)}</span>` : ''}</div>
+          <div><span>결제예정일 경과</span><b style="color:${r.overdueAmount ? 'var(--critical)' : 'inherit'}">${won(r.overdueAmount)} (${r.overdueCount}건)</b></div>
+          <div><span>기간 내 청구 / 수금</span><b>${won(r.period.invoiced)} / ${won(r.period.collected)}</b></div>
+        </div>
       </div>
     </div>
 
-    ${quarterCard(s, a, refQuarter)}
-
+    <div class="section-title"><span class="num-badge">2</span>현황 분석</div>
+    ${targetCard(s)}
     <div class="grid g3">
       <div class="card">
-        <div class="card-head"><h3>연간 목표매출 달성률</h3>${paceChip(a.paceRate)}</div>
-        <div class="donut-box"><canvas id="c-gauge" aria-label="목표 달성률"></canvas>
+        <div class="card-head"><h3>${s.year}년 목표매출 달성률</h3>${paceChip(a.paceRate)}</div>
+        <div class="donut-box"><canvas id="c-gauge" aria-label="연간 목표매출 달성률"></canvas>
           <div class="donut-center"><div><div class="big num">${s.target ? pct(a.rate) : '-'}</div><div class="small">${s.year}년 목표 대비</div></div></div>
         </div>
         <div class="target-meta">
           <div><div class="lab">연간 목표</div><div class="val">${won(s.target)}</div></div>
-          <div><div class="lab">누적 매출 (~${endMonth}월)</div><div class="val">${won(a.ytdSales)}</div></div>
+          <div><div class="lab">누적 매출 (~${a.endMonth}월)</div><div class="val">${won(a.ytdSales)}</div></div>
           <div><div class="lab">경과 기간 기준 기대치 (${a.monthsElapsed.toFixed(1)}개월)</div><div class="val">${won(a.expectedToDate)}</div></div>
           <div><div class="lab">남은 목표 (${a.monthsLeft}개월)</div><div class="val">${won(a.remaining)}</div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>산업 분야별 매출 비중</h3>${scopeToggle()}</div>
-        <div class="donut-box"><canvas id="c-industry" aria-label="산업 분야별 매출 비중"></canvas>
-          <div class="donut-center"><div><div class="big num" style="font-size:18px" id="c-industry-total"></div><div class="small" id="c-industry-scope"></div></div></div>
-        </div>
-        <div class="legend" id="l-industry"></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>제품 시리즈별 매출 비중</h3>${scopeToggle()}</div>
-        <div class="donut-box"><canvas id="c-series" aria-label="제품 시리즈별 매출 비중"></canvas>
-          <div class="donut-center"><div><div class="big num" style="font-size:18px" id="c-series-total"></div><div class="small" id="c-series-scope"></div></div></div>
-        </div>
-        <div class="legend" id="l-series"></div>
-      </div>
+      ${donutCard('c-sales-mix', '매출 구성', '제품 · 상품 · 용역', won(cur.sales.total), s.short)}
+      ${donutCard('c-cost-mix', '지출 구성', '상품 · 원재료 · 경비 · 기타', won(cur.costs.total), s.short)}
     </div>
 
-    <div class="card ai-card" style="margin-bottom:16px" id="ai-card"></div>
-
-    <div class="grid g21">
+    <div class="section-title"><span class="num-badge">3</span>추이 및 분석</div>
+    <div class="grid g-trend">
       <div class="card">
-        <div class="card-head"><h3>${s.mode === 'month' ? '월별' : '분기별'} 매출 추이</h3><span class="hint">점선: 목표 페이스 (연간 목표 ÷ ${s.mode === 'month' ? 12 : 4})</span></div>
-        <div class="chart-box"><canvas id="c-sales"></canvas></div>
+        <div class="card-head"><h3>매출 · 지출 추이</h3><span class="hint">${trendHint(s)}</span></div>
+        <div class="chart-box" style="height:320px"><canvas id="c-trend"></canvas></div>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>판매처 TOP 10</h3>${scopeToggle()}</div>
-        <div class="table-wrap" id="t-customers"></div>
-      </div>
+      ${donutCard('c-industry', '산업 분야별 매출', s.label, null, s.short)}
+      ${donutCard('c-series', '제품별 매출', s.label, null, s.short)}
     </div>
 
-    <div class="grid g2">
-      <div class="card">
-        <div class="card-head"><h3>${s.mode === 'month' ? '월별' : '분기별'} 매입·지출 구성</h3></div>
-        <div class="chart-box"><canvas id="c-costs"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>미수금 현황</h3><span class="hint">청구일 기준 경과일 · 오늘 기준</span></div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px" class="target-meta">
-          <div><div class="lab">잔액</div><div class="val">${won(r.outstanding)}</div></div>
-          <div><div class="lab">결제예정일 경과</div><div class="val" style="color:${r.overdueAmount ? 'var(--critical)' : 'inherit'}">${won(r.overdueAmount)} (${r.overdueCount}건)</div></div>
-          <div><div class="lab">${esc(s.label.replace(`${s.year}년 `, ''))} 청구 / 수금</div><div class="val">${won(r.period.invoiced)} / ${won(r.period.collected)}</div></div>
-        </div>
-        <div style="position:relative;height:150px"><canvas id="c-aging"></canvas></div>
-        <div class="table-wrap" style="margin-top:12px">
-          <table class="tbl"><thead><tr><th>거래처</th><th class="r">미수 잔액</th><th class="c">건수</th><th>최초 청구일</th></tr></thead>
-          <tbody>${r.topCustomers.length ? r.topCustomers.map((c) => `<tr><td>${esc(c.customer)}</td><td class="r num">${won(c.balance)}</td><td class="c">${c.count}</td><td>${esc(c.oldest)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">미수금이 없습니다.</td></tr>'}</tbody></table>
-        </div>
-      </div>
-    </div>`;
+    <div class="section-title"><span class="num-badge">4</span>AI 분석</div>
+    <div class="card ai-card" id="ai-card"></div>`;
 
+  // ② 목표 달성 타일 + 원형 그래프
   charts.push(gauge(body.querySelector('#c-gauge'), a.ytdSales, s.target));
-  quarterStats(s, a).forEach((q) => {
-    const c = body.querySelector(`#c-q${q.q}`);
-    if (c) charts.push(gauge(c, q.sales, q.target));
-  });
+  quarterStats(s).forEach((x) => { const c = body.querySelector(`#c-q${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
+  if (showMonthly(s)) monthStats(s).forEach((x) => { const c = body.querySelector(`#c-m${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
 
-  const labels = s.buckets.map((b) => b.label);
-  const sel = s.period - 1;
-  charts.push(stackedBar(body.querySelector('#c-sales'), labels, [
-    { label: '제품 매출', data: s.buckets.map((b) => b.sales.product), color: SERIES[0] },
-    { label: '상품 매출', data: s.buckets.map((b) => b.sales.goods), color: SERIES[1] },
-    { label: '용역 매출', data: s.buckets.map((b) => b.sales.service), color: SERIES[2] },
-  ], { highlightIndex: sel, line: s.target ? { label: '목표 페이스', data: labels.map(() => s.target / labels.length) } : null }));
+  const salesMix = [
+    { label: '제품', value: cur.sales.product }, { label: '상품', value: cur.sales.goods }, { label: '용역', value: cur.sales.service },
+  ];
+  const costMix = [
+    { label: '상품 매입', value: cur.costs.productPurchase }, { label: '원재료 매입', value: cur.costs.materialPurchase },
+    { label: '경비', value: cur.costs.expense }, { label: '기타(광고·접대 등)', value: cur.costs.etcTotal },
+  ];
+  charts.push(donut(body.querySelector('#c-sales-mix'), body.querySelector('#l-c-sales-mix'), salesMix, (l) => SALES_COLORS[l]));
+  charts.push(donut(body.querySelector('#c-cost-mix'), body.querySelector('#l-c-cost-mix'), costMix, (l) => COST_COLORS[l]));
+  emptyLegend(body, 'c-sales-mix', cur.sales.total, '이 기간의 매출이 없습니다.');
+  emptyLegend(body, 'c-cost-mix', cur.costs.total, '이 기간의 지출이 없습니다.');
 
-  charts.push(stackedBar(body.querySelector('#c-costs'), labels, [
-    { label: '상품 매입', data: s.buckets.map((b) => b.costs.productPurchase), color: SERIES[0] },
-    { label: '원재료 매입', data: s.buckets.map((b) => b.costs.materialPurchase), color: SERIES[1] },
-    { label: '경비', data: s.buckets.map((b) => b.costs.expense), color: SERIES[2] },
-    { label: '기타 지출(광고·접대 등)', data: s.buckets.map((b) => b.costs.etcTotal), color: SERIES[3] },
-  ], { highlightIndex: sel }));
-
-  charts.push(hbar(body.querySelector('#c-aging'), r.aging.map((x) => `${x.label} (${x.count})`), r.aging.map((x) => x.value),
-    ['#86b6ef', '#3987e5', '#1c5cab', '#d03b3b']));
-
-  renderScoped(body, s);
-  body.querySelectorAll('[data-scope]').forEach((btn) => btn.addEventListener('click', () => {
-    scope = btn.dataset.scope;
-    body.querySelectorAll('[data-scope]').forEach((b) => b.classList.toggle('on', b.dataset.scope === scope));
-    renderScoped(body, s);
+  // ③ 추이 + 분야/제품
+  charts.push(compareBar(body.querySelector('#c-trend'), s.buckets.map((b) => b.label), [
+    { label: '매출', data: s.buckets.map((b) => b.sales.total), color: SERIES[0] },
+    { label: '지출', data: s.buckets.map((b) => b.costs.total), color: SERIES[1] },
+  ], {
+    selected: s.buckets.map((b) => b.selected),
+    line: s.buckets.some((b) => b.target) ? { label: '목표 매출', data: s.buckets.map((b) => b.target) } : null,
   }));
+  const indTotal = s.industry.reduce((t, x) => t + x.value, 0);
+  const serTotal = s.series.reduce((t, x) => t + x.value, 0);
+  body.querySelector('#t-c-industry').textContent = won(indTotal);
+  body.querySelector('#t-c-series').textContent = won(serTotal);
+  charts.push(donut(body.querySelector('#c-industry'), body.querySelector('#l-c-industry'), s.industry, (l) => INDUSTRY_COLORS[l] || OTHER));
+  charts.push(donut(body.querySelector('#c-series'), body.querySelector('#l-c-series'), s.series, seriesColor));
+  emptyLegend(body, 'c-series', serTotal, '매출 내역이 없습니다.<br><a href="#/input/sales">매출 내역 입력 →</a>');
 
   renderAi(body.querySelector('#ai-card'), s, ai);
 }
 
-// 분기별 목표(연간 목표 ÷ 4) 대비 실적. 진행 중인 분기는 경과 일수만큼 안분한 기대치와도 비교한다.
-function quarterStats(s, a) {
-  const qTarget = s.target / 4;
+function trendHint(s) {
+  const unit = s.mode === 'quarter' ? '분기별' : '월별';
+  const scope = s.mode === 'range' ? s.label : `${s.year}년`;
+  return `${scope} ${unit} · 점선: 목표 매출${s.mode === 'month' || s.mode === 'quarter' ? ' · 선택 기간 진하게' : ''}`;
+}
+
+function donutCard(id, title, hint, total, scope) {
+  return `
+    <div class="card">
+      <div class="card-head"><h3>${esc(title)}</h3><span class="hint">${esc(hint)}</span></div>
+      <div class="donut-box"><canvas id="${id}" aria-label="${esc(title)}"></canvas>
+        <div class="donut-center"><div><div class="big num" style="font-size:18px" id="t-${id}">${total ?? ''}</div><div class="small">${esc(scope)}</div></div></div>
+      </div>
+      <div class="legend" id="l-${id}"></div>
+    </div>`;
+}
+
+function emptyLegend(body, id, total, html) {
+  if (!total) body.querySelector(`#l-${id}`).innerHTML = `<div class="empty" style="padding:12px">${html}</div>`;
+}
+
+// ---------- 목표 달성 현황 (분기 + 월) ----------
+// 분기 목표 = 연간 목표 ÷ 4, 월 목표 = ÷ 12. 진행 중인 기간은 오늘까지 경과한 만큼과도 비교
+function stat(key, sales, target, startMonth, lenMonths, elapsedYear) {
+  const inside = Math.min(lenMonths, Math.max(0, elapsedYear - (startMonth - 1)));
+  const state = inside >= lenMonths ? 'done' : inside > 0 ? 'running' : 'future';
+  return {
+    key, sales, target, state,
+    rate: target ? sales / target : null,
+    paceRate: state === 'running' && target ? sales / (target * (inside / lenMonths)) : null,
+    gap: target - sales,
+  };
+}
+
+function quarterStats(s) {
   return [1, 2, 3, 4].map((q) => {
-    const sales = s.months.slice((q - 1) * 3, q * 3).reduce((t, m) => t + m.sales.total, 0);
-    const elapsedInQ = Math.min(3, Math.max(0, a.monthsElapsed - (q - 1) * 3));
-    const state = elapsedInQ >= 3 ? 'done' : elapsedInQ > 0 ? 'running' : 'future';
-    return {
-      q, sales, target: qTarget, state,
-      rate: qTarget ? sales / qTarget : null,
-      paceRate: state === 'running' && qTarget ? sales / (qTarget * (elapsedInQ / 3)) : null,
-      gap: qTarget - sales,
-    };
+    const sales = s.yearMonths.slice((q - 1) * 3, q * 3).reduce((t, m) => t + m.sales.total, 0);
+    return { ...stat(q, sales, s.target / 4, q * 3 - 2, 3, s.yearElapsed), selected: s.yearMonths.slice((q - 1) * 3, q * 3).some((m) => m.selected) && s.mode !== 'year' };
   });
 }
 
-function quarterCard(s, a, selQuarter) {
+function monthStats(s) {
+  return s.yearMonths.map((m) => ({ ...stat(m.month, m.sales.total, s.target / 12, m.month, 1, s.yearElapsed), selected: m.selected }));
+}
+
+const showMonthly = (s) => s.mode === 'month' || s.mode === 'range';
+
+function statusChip(x) {
+  if (x.state === 'future') return '<span class="badge">예정</span>';
+  if (x.rate >= 1) return '<span class="status-chip good">✓ 달성</span>';
+  if (x.state === 'running') return x.paceRate >= 1 ? '<span class="status-chip good">✓ 진행 중 · 페이스 양호</span>' : `<span class="status-chip warning">! 진행 중 · 페이스 ${pct(x.paceRate, 0)}</span>`;
+  return '<span class="status-chip critical">▼ 미달</span>';
+}
+
+function targetCard(s) {
   if (!s.target) return '';
-  const tiles = quarterStats(s, a).map((x) => {
-    let chip;
-    if (x.state === 'future') chip = '<span class="badge">예정</span>';
-    else if (x.rate >= 1) chip = '<span class="status-chip good">✓ 달성</span>';
-    else if (x.state === 'running') chip = x.paceRate >= 1 ? '<span class="status-chip good">✓ 진행 중 · 페이스 양호</span>' : `<span class="status-chip warning">! 진행 중 · 페이스 ${pct(x.paceRate, 0)}</span>`;
-    else chip = '<span class="status-chip critical">▼ 미달</span>';
+  const quarters = quarterStats(s).map((x) => {
     const gapLine = x.state === 'future' ? '&nbsp;'
       : x.gap > 0 ? `목표까지 <b>${won(x.gap)}</b> ${x.state === 'done' ? '부족' : '남음'}`
         : `목표 대비 <b style="color:var(--good)">+${won(-x.gap)}</b> 초과`;
     return `
-      <div class="q-tile ${x.q === selQuarter ? 'sel' : ''}">
-        <div class="q-head"><b>${x.q}분기</b>${chip}</div>
-        <div class="q-donut"><canvas id="c-q${x.q}" aria-label="${x.q}분기 목표 달성률"></canvas>
+      <div class="q-tile ${x.selected ? 'sel' : ''}">
+        <div class="q-head"><b>${x.key}분기</b>${statusChip(x)}</div>
+        <div class="q-donut"><canvas id="c-q${x.key}" aria-label="${x.key}분기 목표 달성률"></canvas>
           <div class="donut-center"><div class="big num">${x.state === 'future' ? '-' : pct(x.rate, 0)}</div></div>
         </div>
         <div class="q-nums"><span>실적</span><b class="num">${won(x.sales)}</b></div>
@@ -246,48 +317,33 @@ function quarterCard(s, a, selQuarter) {
         <div class="q-gap">${gapLine}</div>
       </div>`;
   }).join('');
+
+  let monthly = '';
+  if (showMonthly(s)) {
+    const mark = (x) => (x.state === 'future' ? '<span class="m-mark none">예정</span>'
+      : x.rate >= 1 ? '<span class="m-mark good">✓ 달성</span>'
+        : x.state === 'running' ? '<span class="m-mark warn">진행 중</span>' : '<span class="m-mark bad">▼ 미달</span>');
+    monthly = `
+      <div class="sub-head"><h4>${s.year}년 월별 목표 달성 현황</h4><span class="hint" style="color:var(--text-3);font-size:12px">월 목표 = 연간 목표 ÷ 12 = ${won(s.target / 12)}</span></div>
+      <div class="m-grid">${monthStats(s).map((x) => `
+        <div class="m-tile ${x.selected ? 'sel' : ''}">
+          <div class="m-head"><span>${x.key}월</span>${mark(x)}</div>
+          <div class="m-donut"><canvas id="c-m${x.key}" aria-label="${x.key}월 목표 달성률"></canvas>
+            <div class="donut-center"><div class="big num">${x.state === 'future' ? '-' : pct(x.rate, 0)}</div></div>
+          </div>
+          <div class="m-val">${won(x.sales)}</div>
+        </div>`).join('')}
+      </div>`;
+  }
   return `
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><h3>${s.year}년 분기별 목표 달성 현황</h3><span class="hint">분기 목표 = 연간 목표 ${won(s.target)} ÷ 4</span></div>
-      <div class="q-grid">${tiles}</div>
+      <div class="q-grid">${quarters}</div>
+      ${monthly}
     </div>`;
 }
 
-function scopeToggle() {
-  return `<div class="seg" style="transform:scale(.9);transform-origin:right">
-    <button type="button" data-scope="period" class="${scope === 'period' ? 'on' : ''}">선택 기간</button>
-    <button type="button" data-scope="year" class="${scope === 'year' ? 'on' : ''}">연간 누적</button></div>`;
-}
-
-let scopedCharts = [];
-function renderScoped(body, s) {
-  scopedCharts.forEach((c) => { c.destroy(); charts = charts.filter((x) => x !== c); });
-  scopedCharts = [];
-  const scopeLabel = scope === 'period' ? s.label.replace(`${s.year}년 `, '') : '연간 누적';
-  const ind = s.industry[scope];
-  const ser = s.series[scope];
-  const indTotal = ind.reduce((a, b) => a + b.value, 0);
-  const serTotal = ser.reduce((a, b) => a + b.value, 0);
-
-  body.querySelector('#c-industry-total').textContent = won(indTotal);
-  body.querySelector('#c-industry-scope').textContent = scopeLabel;
-  body.querySelector('#c-series-total').textContent = won(serTotal);
-  body.querySelector('#c-series-scope').textContent = scopeLabel;
-
-  scopedCharts.push(donut(body.querySelector('#c-industry'), body.querySelector('#l-industry'), ind, (l) => INDUSTRY_COLORS[l] || OTHER));
-  scopedCharts.push(donut(body.querySelector('#c-series'), body.querySelector('#l-series'), ser, seriesColor));
-  if (!serTotal) body.querySelector('#l-series').innerHTML = '<div class="empty" style="padding:12px">매출 내역이 없습니다.<br><a href="#/input/sales">매출 내역 입력 →</a></div>';
-  charts.push(...scopedCharts);
-
-  const cust = s.customers[scope];
-  const cTotal = cust.reduce((a, b) => a + b.value, 0);
-  body.querySelector('#t-customers').innerHTML = cust.length
-    ? `<table class="tbl"><thead><tr><th class="c">#</th><th>판매처</th><th class="r">매출</th><th class="r">비중</th></tr></thead><tbody>
-      ${cust.map((c, i) => `<tr><td class="c">${i + 1}</td><td>${esc(c.label)}</td><td class="r num">${won(c.value)}</td><td class="r num">${pct(c.value / cTotal)}</td></tr>`).join('')}
-      </tbody></table>`
-    : '<div class="empty">매출 내역이 없습니다.</div>';
-}
-
+// ---------- ④ AI 분석 ----------
 function renderAi(el, s, ai) {
   const list = (items, empty) => (items?.length ? `<ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : `<div class="ai-meta">${empty}</div>`);
   el.innerHTML = `
@@ -303,14 +359,15 @@ function renderAi(el, s, ai) {
       <div class="ai-cols">
         <div><h4><span class="dot" style="background:var(--accent)"></span>이번 기간 현황</h4>${list(ai.status, '-')}</div>
         <div><h4><span class="dot" style="background:var(--critical)"></span>부족한 점·주의</h4>${list(ai.shortfalls, '특이사항 없음')}</div>
-        <div><h4><span class="dot" style="background:var(--good)"></span>다음 ${s.mode === 'month' ? '달' : '분기'} 개선할 점</h4>${list(ai.nextActions, '-')}</div>
+        <div><h4><span class="dot" style="background:var(--good)"></span>${nextLabel[s.mode]} 개선할 점</h4>${list(ai.nextActions, '-')}</div>
       </div>`
-    : '<div class="ai-meta">아직 분석이 없습니다. 데이터 입력 후 [분석 생성]을 누르면 이번 기간의 매출 상황, 부족한 점, 다음 기간 개선점을 요약합니다.</div>'}`;
+    : '<div class="ai-meta">아직 분석이 없습니다. [분석 생성]을 누르면 이 기간의 매출 상황, 부족한 점, 다음 기간 개선점을 요약합니다.</div>'}`;
   el.querySelector('#ai-gen').addEventListener('click', async (e) => {
     e.target.disabled = true;
     e.target.textContent = '분석 중…';
     try {
-      const res = await api('/api/mgmt/ai-comment', { method: 'POST', body: { year: s.year, mode: s.mode, period: s.period } });
+      const body = { mode: s.mode, year: s.year, from: s.from, to: s.to, period: period.period };
+      const res = await api('/api/mgmt/ai-comment', { method: 'POST', body });
       if (res.source === 'rules') toast('AI 연결이 설정되지 않아 규칙 기반 요약으로 표시합니다.');
       renderAi(el, s, res);
     } catch (err) {

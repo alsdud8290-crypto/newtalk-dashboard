@@ -27,15 +27,48 @@ if (window.Chart) {
   Chart.defaults.font.size = 12;
   Chart.defaults.color = INK.secondary;
   Chart.defaults.plugins.legend.display = false;
-  Chart.defaults.plugins.tooltip.backgroundColor = '#1d2129';
-  Chart.defaults.plugins.tooltip.padding = 10;
-  Chart.defaults.plugins.tooltip.boxPadding = 4;
+  // 툴팁은 그래프 안이 아니라 페이지 맨 위층의 HTML 상자로 그린다 → 작은 원형에서도 잘리거나 글자와 겹치지 않음
+  Chart.defaults.plugins.tooltip.enabled = false;
+  Chart.defaults.plugins.tooltip.external = externalTooltip;
   Chart.defaults.maintainAspectRatio = false;
+}
+
+let tipEl;
+export function hideTooltip() {
+  if (tipEl) tipEl.style.opacity = '0';
+}
+function externalTooltip({ chart, tooltip }) {
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.className = 'chart-tip';
+    document.body.appendChild(tipEl);
+    // 스크롤하면 위치가 어긋나므로 숨김
+    document.addEventListener('scroll', hideTooltip, true);
+  }
+  if (tooltip.opacity === 0 || !tooltip.body?.length) { hideTooltip(); return; }
+  const title = (tooltip.title || []).filter(Boolean);
+  const rows = tooltip.body.map((b, i) => {
+    const c = tooltip.labelColors[i] || {};
+    const color = typeof c.backgroundColor === 'string' ? c.backgroundColor : (c.borderColor || '#888');
+    return `<div class="tip-row"><span class="tip-sw" style="background:${esc(color)}"></span>${esc(b.lines.join(' ').trim())}</div>`;
+  }).join('');
+  const footer = (tooltip.footer || []).filter(Boolean).map((f) => `<div class="tip-foot">${esc(f)}</div>`).join('');
+  tipEl.innerHTML = `${title.length ? `<div class="tip-title">${esc(title.join(' '))}</div>` : ''}${rows}${footer}`;
+  tipEl.style.opacity = '1';
+  const r = chart.canvas.getBoundingClientRect();
+  const w = tipEl.offsetWidth;
+  const h = tipEl.offsetHeight;
+  let x = r.left + tooltip.caretX + 14;
+  if (x + w > window.innerWidth - 8) x = r.left + tooltip.caretX - w - 14; // 오른쪽이 모자라면 왼쪽에
+  let y = r.top + tooltip.caretY - h / 2;
+  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+  tipEl.style.left = `${Math.max(8, x)}px`;
+  tipEl.style.top = `${y}px`;
 }
 
 const tooltipWon = {
   callbacks: {
-    label: (ctx) => ` ${ctx.dataset.label || ctx.label}: ${won(ctx.parsed.y ?? ctx.parsed)}`,
+    label: (ctx) => `${ctx.dataset.label || ctx.label}: ${won(ctx.parsed.y ?? ctx.parsed)}`,
   },
 };
 
@@ -56,7 +89,7 @@ export function donut(canvas, legendEl, items, colorOf) {
     options: {
       cutout: '62%',
       plugins: {
-        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${won(c.parsed)} (${pct(c.parsed / total)})` } },
+        tooltip: { callbacks: { title: () => '', label: (c) => `${c.label}: ${won(c.parsed)} (${pct(c.parsed / total)})` } },
       },
     },
   });
@@ -89,7 +122,13 @@ export function gauge(canvas, achieved, target) {
     },
     options: {
       cutout: '74%', rotation: -90, circumference: 360,
-      plugins: { tooltip: { enabled: !!target, callbacks: { label: (c) => ` ${c.label}: ${won(c.parsed)}` } } },
+      plugins: { tooltip: { external: target ? externalTooltip : () => {}, callbacks: {
+        title: () => '',
+        // 고리는 100%까지만 채우지만, 툴팁은 실제 실적·남은 금액을 보여준다
+        label: (c) => (c.dataIndex === 0
+          ? `실적: ${won(achieved)} (${pct(achieved / target, 1)})`
+          : `남은 목표: ${won(Math.max(0, target - achieved))}`),
+      } } },
     },
   });
 }
@@ -138,6 +177,42 @@ export function hbar(canvas, labels, values, colors) {
         y: { grid: { display: false }, border: { color: INK.grid } },
       },
       plugins: { tooltip: { callbacks: { label: (c) => ` ${won(c.parsed.x)}` } } },
+    },
+  });
+}
+
+// 매출·지출 나란히 비교 막대 (+ 같은 축의 목표 매출 선). 선택되지 않은 기간은 옅게.
+export function compareBar(canvas, labels, series, { line, selected } = {}) {
+  const fade = (c, i) => (!selected || selected[i] ? c : c + '59');
+  const datasets = series.map((s) => ({
+    type: 'bar', label: s.label, data: s.data,
+    backgroundColor: s.data.map((_, i) => fade(s.color, i)),
+    borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: 0.7, barPercentage: 0.9,
+  }));
+  if (line) {
+    datasets.push({
+      type: 'line', label: line.label, data: line.data, borderColor: INK.primary, borderWidth: 2,
+      borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 4, fill: false, order: -1, stepped: 'middle',
+    });
+  }
+  return new Chart(canvas, {
+    data: { labels, datasets },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { display: false }, border: { color: INK.grid } },
+        y: { beginAtZero: true, grid: { color: INK.grid }, border: { display: false }, ticks: { callback: (v) => won(v, { digits: 1 }) } },
+      },
+      plugins: {
+        legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 2 } },
+        tooltip: {
+          ...tooltipWon,
+          footer: (items) => {
+            const v = Object.fromEntries(items.map((i) => [i.dataset.label, i.parsed.y]));
+            return v['매출'] !== undefined && v['지출'] !== undefined ? `추정 이익: ${won(v['매출'] - v['지출'])}` : '';
+          },
+        },
+      },
     },
   });
 }

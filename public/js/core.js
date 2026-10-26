@@ -100,13 +100,17 @@ export function confirmBox(message, label = '확인') {
   });
 }
 
-// 기간 상태 (연도·분기/월) — 화면 간 공유, 브라우저에 기억
+// 기간 상태 (연도 + 월/분기/연간/기간) — 화면 간 공유, 브라우저에 기억
 const now = new Date();
+const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('period') || 'null'); } catch { return null; } })();
-export const period = saved || {
+export const period = {
   year: now.getFullYear(),
   mode: 'quarter',
   period: Math.floor(now.getMonth() / 3) + 1,
+  from: ym(now.getFullYear(), 1), // 기간 조회 기본값: 올해 1월 ~ 이번 달
+  to: ym(now.getFullYear(), now.getMonth() + 1),
+  ...(saved || {}),
 };
 export function setPeriod(p) {
   Object.assign(period, p);

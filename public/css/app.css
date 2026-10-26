@@ -219,3 +219,50 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .q-donut .big { font-size: 20px; }
 .q-nums { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); margin-top: 4px; }
 .q-gap { font-size: 12px; color: var(--text-3); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+
+/* 원형 그래프: 가운데 글자를 그래프 아래층에 두어, 마우스를 올렸을 때 툴팁이 글자를 가리도록 */
+.donut-box canvas, .q-donut canvas, .m-donut canvas { position: relative; z-index: 1; }
+.donut-center { z-index: 0; }
+
+/* 대시보드 구역 제목 */
+.section-title { display: flex; align-items: center; gap: 8px; margin: 26px 0 12px; font-size: 15px; font-weight: 700; color: var(--text); }
+.section-title:first-child { margin-top: 0; }
+.section-title .num-badge { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 12px; }
+.section-title .hint { font-weight: 400; color: var(--text-3); font-size: 12px; }
+
+/* KPI 보조 줄 */
+.kpis.k4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .kpis.k4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi .k-lines { margin-top: 8px; display: grid; gap: 3px; font-size: 12px; color: var(--text-3); }
+.kpi .k-lines div { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* 추이 및 분석: 추이 차트를 넓게 */
+.grid.g-trend { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 1280px) { .grid.g-trend { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .grid.g-trend > :first-child { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .grid.g-trend { grid-template-columns: minmax(0, 1fr); } }
+
+/* 월별 목표 달성 현황 */
+.m-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .m-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .m-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.m-tile { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 10px 8px; text-align: center; }
+.m-tile.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.m-tile .m-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+.m-tile .m-mark { font-size: 11px; font-weight: 700; }
+.m-tile .m-mark.good { color: #087a08; } .m-tile .m-mark.bad { color: #a92c2c; } .m-tile .m-mark.warn { color: #8a5a00; } .m-tile .m-mark.none { color: var(--text-3); }
+.m-donut { position: relative; height: 72px; margin: 6px 0; }
+.m-donut .donut-center .big { font-size: 13px; font-weight: 700; }
+.m-tile .m-val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sub-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+.sub-head h4 { margin: 0; font-size: 14px; }
+
+/* 기간 조회 입력 */
+.filters input[type=month] { height: 34px; width: 150px; }
+.filters .range-sep { color: var(--text-3); }
+
+/* 그래프 툴팁 (페이지 맨 위층) */
+.chart-tip { position: fixed; z-index: 100; pointer-events: none; opacity: 0; transition: opacity .1s; background: #1d2129; color: #fff; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.5; box-shadow: 0 6px 16px rgba(0,0,0,.18); white-space: nowrap; }
+.chart-tip .tip-title { font-weight: 700; margin-bottom: 2px; }
+.chart-tip .tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.chart-tip .tip-sw { width: 10px; height: 10px; border-radius: 2px; flex: none; border: 1px solid rgba(255,255,255,.6); }
+.chart-tip .tip-foot { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.2); font-weight: 600; }

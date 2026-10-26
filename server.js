@@ -5,7 +5,7 @@ import { db, nowStr } from './lib/db.js';
 import {
   DEPTS, PERMS, defaultPerms, hashPassword, verifyPassword, newToken, parseCookies, publicUser,
 } from './lib/auth.js';
-import { summarize, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
+import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -157,32 +157,35 @@ app.get('/api/meta', requireLogin, wrap(async (req, res) => {
 const mgmt = express.Router();
 mgmt.use(requirePerm('mgmt'));
 
+// 조회 조건 정리 (형식 오류는 400). AI 코멘트는 "단위:시작월:종료월"을 키로 기간별 저장
 function parsePeriod(q) {
-  const year = intParam(q.year, 2000, 2100, '연도');
-  const mode = q.mode === 'month' ? 'month' : 'quarter';
-  const period = intParam(q.period, 1, mode === 'month' ? 12 : 4, '기간');
-  return { year, mode, period };
+  const mode = ['month', 'quarter', 'year', 'range'].includes(q.mode) ? q.mode : 'quarter';
+  try {
+    const p = resolvePeriod({ mode, year: q.year, period: q.period, from: q.from, to: q.to });
+    return { query: { mode, year: q.year, period: q.period, from: q.from, to: q.to }, key: `${mode}:${p.start}:${p.end}` };
+  } catch (e) {
+    if (e instanceof PeriodError) throw new HttpError(400, e.message);
+    throw e;
+  }
 }
 
 mgmt.get('/summary', wrap(async (req, res) => {
-  const { year, mode, period } = parsePeriod(req.query);
-  res.json(await summarize(year, mode, period));
+  res.json(await summarize(parsePeriod(req.query).query));
 }));
 
 mgmt.get('/ai-comment', wrap(async (req, res) => {
-  const { year, mode, period } = parsePeriod(req.query);
-  const row = await db.get('SELECT * FROM ai_comments WHERE key = ?', `${year}-${mode}-${period}`);
+  const row = await db.get('SELECT * FROM ai_comments WHERE key = ?', parsePeriod(req.query).key);
   res.json(row ? { ...JSON.parse(row.content), source: row.source, createdAt: row.created_at } : null);
 }));
 
 mgmt.post('/ai-comment', wrap(async (req, res) => {
-  const { year, mode, period } = parsePeriod(req.body || {});
-  const result = await generateComment(await summarize(year, mode, period));
+  const { query, key } = parsePeriod(req.body || {});
+  const result = await generateComment(await summarize(query));
   const { source, error, ...content } = result;
+  const createdAt = nowStr();
   await db.run(`INSERT INTO ai_comments (key, content, source, created_at) VALUES (?, ?, ?, ?)
-              ON CONFLICT(key) DO UPDATE SET content = excluded.content, source = excluded.source, created_at = excluded.created_at`, `${year}-${mode}-${period}`, JSON.stringify(content), source, nowStr());
-  const row = await db.get('SELECT created_at FROM ai_comments WHERE key = ?', `${year}-${mode}-${period}`);
-  res.json({ ...content, source, error, createdAt: row.created_at });
+              ON CONFLICT(key) DO UPDATE SET content = excluded.content, source = excluded.source, created_at = excluded.created_at`, key, JSON.stringify(content), source, createdAt);
+  res.json({ ...content, source, error, createdAt });
 }));
 
 // ---------- 경영지원팀: 목표 / 월별 실적 ----------
