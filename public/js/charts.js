@@ -31,6 +31,7 @@ if (window.Chart) {
   Chart.defaults.plugins.tooltip.enabled = false;
   Chart.defaults.plugins.tooltip.external = externalTooltip;
   Chart.defaults.maintainAspectRatio = false;
+  Chart.defaults.devicePixelRatio = Math.max(2, window.devicePixelRatio || 1); // 이미지 저장 시에도 선명하게
 }
 
 let tipEl;

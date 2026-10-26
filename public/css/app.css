@@ -266,3 +266,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .chart-tip .tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .chart-tip .tip-sw { width: 10px; height: 10px; border-radius: 2px; flex: none; border: 1px solid rgba(255,255,255,.6); }
 .chart-tip .tip-foot { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.2); font-weight: 600; }
+
+/* 내보내기 버튼 */
+.card-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.dl-btn { width: 28px; padding: 0; color: var(--text-2); }
+.section-block { margin-bottom: 0; }
+
+/* 선택 강조: 이미지 저장(html2canvas)에서도 똑같이 보이도록 inset 그림자 대신 2px 테두리 */
+.q-tile.sel, .m-tile.sel { box-shadow: none; border: 2px solid var(--accent); }
+.q-tile.sel { padding: 13px 15px; }
+.m-tile.sel { padding: 9px 9px 7px; }

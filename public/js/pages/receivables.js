@@ -1,4 +1,5 @@
 import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, today } from '../core.js';
+import { datasetSheet, downloadXlsx, downloadCsv, exportButtons, fileSafe, stamp } from '../exporter.js';
 
 export async function render(main, ctx) {
   let rows = [];
@@ -11,6 +12,7 @@ export async function render(main, ctx) {
       <div class="filters">
         <div class="seg" id="r-open"><button type="button" data-v="1" class="on">미수 건만</button><button type="button" data-v="0">전체</button></div>
         <input class="input" id="r-filter" placeholder="거래처 검색" style="width:160px">
+        ${exportButtons('r')}
         <button class="btn primary" id="r-add">+ 청구 등록</button>
       </div>
     </div>
@@ -89,6 +91,11 @@ export async function render(main, ctx) {
   });
   main.querySelector('#r-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
   main.querySelector('#r-add').addEventListener('click', () => edit(null));
+  // 화면에 보이는 목록(미수 건만/전체·검색 반영)을 그대로 내려받기
+  const shown = () => (filter ? rows.filter((r) => r.customer.toLowerCase().includes(filter.toLowerCase())) : rows);
+  const exportName = () => fileSafe(`뉴토크코리아_미수금_${onlyOpen ? '미수건' : '전체'}${filter ? `_${filter}` : ''}_${stamp()}`);
+  main.querySelector('#r-xlsx').addEventListener('click', () => downloadXlsx(exportName(), [datasetSheet('receivables', [...shown()].reverse())]));
+  main.querySelector('#r-csv').addEventListener('click', () => downloadCsv(exportName(), datasetSheet('receivables', [...shown()].reverse())));
   main.querySelector('#r-table').addEventListener('click', async (e) => {
     const id = Number(e.target.dataset.edit || e.target.dataset.del);
     const r = rows.find((x) => x.id === id);

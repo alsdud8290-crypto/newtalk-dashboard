@@ -1,4 +1,5 @@
 import { api, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions } from '../core.js';
+import { datasetSheet, downloadXlsx, downloadCsv, stamp } from '../exporter.js';
 
 export const FIELDS = [
   ['product_sales', '제품 매출액', 'sales'],
@@ -34,6 +35,8 @@ export async function render(main, ctx) {
       <div class="card-head">
         <h3 id="m-title"></h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" id="m-xlsx">⬇ 엑셀</button>
+          <button class="btn sm" id="m-csv">⬇ CSV</button>
           <button class="btn sm" id="m-fill">매출 내역 합계로 매출 채우기</button>
           <button class="btn sm primary" id="m-save">월별 실적 저장</button>
         </div>
@@ -118,6 +121,20 @@ export async function render(main, ctx) {
     totals();
     toast('매출 내역 합계를 채웠습니다. 확인 후 저장해 주세요.');
   });
+
+  // 화면의 표 값 그대로 내려받기 (엑셀에는 연간 목표 시트도 포함)
+  const tableRows = () => [...table.querySelectorAll('tbody tr')].map((tr) => ({
+    year, month: Number(tr.dataset.month),
+    ...Object.fromEntries(FIELDS.map(([f]) => [f, parseMoney(tr.querySelector(`[name=${f}]`).value)])),
+  }));
+  main.querySelector('#m-xlsx').addEventListener('click', () => {
+    if (dirty) toast('저장하지 않은 변경 사항도 화면 그대로 포함됩니다.');
+    downloadXlsx(`뉴토크코리아_월별실적_${year}년_${stamp()}`, [
+      datasetSheet('targets', [{ year, revenue: parseMoney(tInput.value) }]),
+      datasetSheet('monthly', tableRows()),
+    ]);
+  });
+  main.querySelector('#m-csv').addEventListener('click', () => downloadCsv(`뉴토크코리아_월별실적_${year}년_${stamp()}`, datasetSheet('monthly', tableRows())));
 
   main.querySelector('#m-save').addEventListener('click', async () => {
     const rows = [...table.querySelectorAll('tbody tr')].map((tr) => ({

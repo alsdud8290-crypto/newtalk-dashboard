@@ -1,4 +1,5 @@
 import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today } from '../core.js';
+import { datasetSheet, downloadXlsx, downloadCsv, exportButtons, fileSafe, stamp } from '../exporter.js';
 
 export async function render(main, ctx) {
   let year = period.year;
@@ -11,6 +12,7 @@ export async function render(main, ctx) {
       <div class="filters">
         <select class="input" id="s-year">${yearOptions(year, ctx.meta.years)}</select>
         <input class="input" id="s-filter" placeholder="판매처·시리즈 검색" style="width:180px">
+        ${exportButtons('s')}
         <button class="btn primary" id="s-add">+ 매출 등록</button>
       </div>
     </div>
@@ -71,6 +73,11 @@ export async function render(main, ctx) {
   main.querySelector('#s-year').addEventListener('change', (e) => { year = Number(e.target.value); setPeriod({ year }); load(); });
   main.querySelector('#s-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
   main.querySelector('#s-add').addEventListener('click', () => edit(null));
+  // 화면에 보이는 목록(연도·검색 반영)을 그대로 내려받기
+  const shown = () => (filter ? rows.filter((r) => `${r.customer} ${r.series} ${r.note}`.toLowerCase().includes(filter.toLowerCase())) : rows);
+  const exportName = () => fileSafe(`뉴토크코리아_매출내역_${year}년${filter ? `_${filter}` : ''}_${stamp()}`);
+  main.querySelector('#s-xlsx').addEventListener('click', () => downloadXlsx(exportName(), [datasetSheet('sales', [...shown()].reverse())]));
+  main.querySelector('#s-csv').addEventListener('click', () => downloadCsv(exportName(), datasetSheet('sales', [...shown()].reverse())));
   main.querySelector('#s-table').addEventListener('click', async (e) => {
     const id = Number(e.target.dataset.edit || e.target.dataset.del);
     const r = rows.find((x) => x.id === id);

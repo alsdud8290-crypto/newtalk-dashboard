@@ -43,6 +43,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(here, 'public')));
 app.use('/vendor/chart.js', express.static(path.join(here, 'node_modules/chart.js/dist')));
 app.use('/vendor/xlsx', express.static(path.join(here, 'node_modules/xlsx/dist')));
+app.use('/vendor/html2canvas', express.static(path.join(here, 'node_modules/html2canvas/dist')));
 
 // ---------- 공통 ----------
 class HttpError extends Error {
@@ -308,6 +309,19 @@ mgmt.post('/import', wrap(async (req, res) => {
   for (const r of rv) stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', r]);
   await db.batch(stmts);
   res.json({ ok: true, counts: { targets: t.length, monthly: m.length, sales: s.length, receivables: rv.length } });
+}));
+
+// ---------- 경영지원팀: 데이터 내보내기 (엑셀·CSV 다운로드용) ----------
+// year 를 주면 그 해 데이터만 (미수금은 청구일 기준), 없으면 전체
+mgmt.get('/export', wrap(async (req, res) => {
+  const y = req.query.year ? String(intParam(req.query.year, 2000, 2100, '연도')) : null;
+  const [targets, monthly, sales, receivables] = await Promise.all([
+    y ? db.all('SELECT year, revenue FROM targets WHERE year = ?', Number(y)) : db.all('SELECT year, revenue FROM targets ORDER BY year'),
+    y ? db.all('SELECT * FROM monthly WHERE year = ? ORDER BY month', Number(y)) : db.all('SELECT * FROM monthly ORDER BY year, month'),
+    y ? db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date, id', y) : db.all('SELECT * FROM sales ORDER BY date, id'),
+    y ? db.all('SELECT * FROM receivables WHERE substr(invoice_date,1,4) = ? ORDER BY invoice_date, id', y) : db.all('SELECT * FROM receivables ORDER BY invoice_date, id'),
+  ]);
+  res.json({ targets, monthly, sales, receivables });
 }));
 
 app.use('/api/mgmt', mgmt);

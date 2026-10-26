@@ -4,6 +4,7 @@ import * as monthly from './pages/monthly.js';
 import * as sales from './pages/sales.js';
 import * as receivables from './pages/receivables.js';
 import * as upload from './pages/upload.js';
+import * as exportPage from './pages/export.js';
 import * as users from './pages/users.js';
 import * as placeholder from './pages/placeholder.js';
 
@@ -17,6 +18,7 @@ const ROUTES = {
   '/input/sales': { page: sales, perm: 'mgmt', title: '매출 내역' },
   '/input/receivables': { page: receivables, perm: 'mgmt', title: '미수금 관리' },
   '/upload': { page: upload, perm: 'mgmt', title: '엑셀 업로드' },
+  '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
   '/production': { page: placeholder, perm: 'production', title: '생산팀', team: 'production' },
   '/service': { page: placeholder, perm: 'service', title: '서비스팀', team: 'service' },
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
@@ -29,6 +31,7 @@ const MENU = [
     ['/input/sales', '매출 내역 (판매처)'],
     ['/input/receivables', '미수금 관리'],
     ['/upload', '엑셀 업로드·데이터 이관'],
+    ['/export', '데이터 내보내기 (엑셀·CSV)'],
   ] },
   { group: '생산팀', perm: 'production', soon: true, items: [['/production', '생산 현황']] },
   { group: '서비스팀', perm: 'service', soon: true, items: [['/service', '서비스(A/S) 현황']] },
