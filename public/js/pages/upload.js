@@ -1,3 +1,4 @@
+import { downloadFull } from '../exporter.js';
 import { api, esc, comma, toast } from '../core.js';
 
 // 시트 종류별 열 이름 별칭. 기존 엑셀의 열 이름이 달라도 아래 중 하나와 맞으면 인식한다.
@@ -102,9 +103,9 @@ function parseSheet(name, ws) {
   const type = detectType(name, aoa.slice(0, 10).flat());
   if (!type) {
     const company = aoa.slice(0, 5).flat().some((c) => /외상매출금|외상매입금|미지급비용/.test(String(c)));
-    return { name, type: null, rows: [], warnings: [company
-      ? '회사 양식(경영지원 관리)입니다. [채권·채무 현황] 메뉴의 "⬆ 회사 양식 업로드"로 올려 주세요.'
-      : '시트 종류를 알 수 없어 건너뜁니다.'] };
+    return company
+      ? { name, type: null, company: true, rows: [], warnings: [] }
+      : { name, type: null, rows: [], warnings: ['시트 종류를 알 수 없어 건너뜁니다.'] };
   }
   const hi = findHeader(aoa, type);
   if (hi < 0) return { name, type, rows: [], warnings: ['헤더(열 이름) 행을 찾지 못했습니다.'] };
@@ -186,11 +187,16 @@ function downloadTemplate() {
 
 export async function render(main, ctx) {
   let parsed = [];
+  let ledgerSheets = []; // 회사 양식(채권·채무 현황) 시트 — 서버에서 읽음
+  let fullBackup = false; // '경영지원 관리 (전체)' 내려받기 파일인지
 
   main.innerHTML = `
     <div class="page-head">
       <div><h2>엑셀 업로드 · 과거 데이터 이관</h2><div class="sub">기존 엑셀(수금 등) 파일을 올려 한 번에 반영합니다. 저장 전 미리보기로 확인할 수 있습니다.</div></div>
-      <button class="btn" id="u-tpl">⬇ 업로드 양식 다운로드</button>
+      <div class="filters">
+        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 회사 양식 스타일 엑셀 한 파일로">⬇ 경영지원 관리 (전체)</button>
+        <button class="btn" id="u-tpl">⬇ 업로드 양식 다운로드</button>
+      </div>
     </div>
     <div class="steps">
       <div class="card step"><b>1</b>양식을 내려받거나, 기존 엑셀 파일을 그대로 사용합니다. 열 이름이 비슷하면 자동 인식합니다.</div>
@@ -211,6 +217,7 @@ export async function render(main, ctx) {
     <div id="u-preview"></div>`;
 
   main.querySelector('#u-tpl').addEventListener('click', downloadTemplate);
+  main.querySelector('#u-full').addEventListener('click', () => downloadFull());
   const drop = main.querySelector('#u-drop');
   const input = main.querySelector('#u-file');
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
@@ -220,12 +227,29 @@ export async function render(main, ctx) {
 
   async function handle(files) {
     parsed = [];
+    ledgerSheets = [];
+    fullBackup = false;
     for (const f of files) {
       try {
-        const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
+        const buf = await f.arrayBuffer();
+        const wb = XLSX.read(buf, { cellDates: true });
+        let hasCompany = false;
         for (const name of wb.SheetNames) {
           if (name === '작성안내') continue;
-          parsed.push({ file: f.name, ...parseSheet(name, wb.Sheets[name]) });
+          if (name === '안내') {
+            const a1 = wb.Sheets[name].A1?.v || '';
+            if (String(a1).includes('경영지원 관리 (전체)')) fullBackup = true;
+            continue;
+          }
+          const p = parseSheet(name, wb.Sheets[name]);
+          if (p.company) { hasCompany = true; continue; }
+          parsed.push({ file: f.name, ...p });
+        }
+        // 회사 양식 시트는 서식(병합·글자색)까지 봐야 해서 서버에서 읽는다
+        if (hasCompany && /\.xlsx$/i.test(f.name)) {
+          const b64 = btoa(Array.from(new Uint8Array(buf), (b) => String.fromCharCode(b)).join(''));
+          const r = await api('/api/mgmt/ledger/parse', { method: 'POST', body: { file: b64 } });
+          r.sheets.forEach((sh) => ledgerSheets.push({ file: f.name, ...sh }));
         }
       } catch (err) {
         parsed.push({ file: f.name, name: '-', type: null, rows: [], warnings: [`파일을 읽을 수 없습니다: ${err.message}`] });
@@ -241,19 +265,34 @@ export async function render(main, ctx) {
     const usable = parsed.filter((p) => p.type && p.rows.length);
     const hasSales = usable.some((p) => p.type === 'sales');
     const hasRecv = usable.some((p) => p.type === 'receivables');
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const secNames = { ar: '외상매출금', ap: '외상매입금', staff: '미지급비용-직원', vendor: '미지급비용-업체' };
+    const ledgerHtml = ledgerSheets.length ? `
+      <div style="margin:16px 0 8px"><b>채권·채무 현황 (회사 양식)</b> <span class="hint">기준월마다 그 달의 기존 내용을 바꿉니다</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th>건수</th></tr></thead><tbody>
+      ${ledgerSheets.map((sh, k) => `<tr><td>${esc(sh.file)} › ${esc(sh.sheet)}</td>
+        <td><input class="input" type="month" data-lm="${k}" value="${sh.month || thisMonth}" style="width:160px"></td>
+        <td>${Object.entries(secNames).map(([key, label]) => `${label} ${sh.counts[key] || 0}`).join(' · ')}${sh.warnings.length ? `<div class="notice warn" style="margin:6px 0 0">${sh.warnings.map(esc).join('<br>')}</div>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '';
     el.innerHTML = `
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><h3>미리보기</h3>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             ${hasSales ? '<span class="check-row"><label><input type="checkbox" id="u-rs"> 해당 연도의 기존 매출 내역을 지우고 교체</label></span>' : ''}
             ${hasRecv ? '<span class="check-row"><label><input type="checkbox" id="u-rr"> 기존 미수금 전체를 지우고 교체</label></span>' : ''}
-            <button class="btn primary" id="u-save" ${usable.length ? '' : 'disabled'}>저장</button>
+            <button class="btn primary" id="u-save" ${usable.length || ledgerSheets.length ? '' : 'disabled'}>저장</button>
           </div>
         </div>
-        <div class="notice" style="margin-bottom:12px">같은 파일을 두 번 올리면 매출 내역·미수금이 중복 등록됩니다. 다시 올릴 때는 '지우고 교체'를 선택해 주세요.</div>
+        ${fullBackup
+          ? '<div class="notice" style="margin-bottom:12px"><b>경영지원 관리 (전체) 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적·채권·채무 현황은 파일에 있는 연도·월만 덮어씁니다.</div>'
+          : '<div class="notice" style="margin-bottom:12px">같은 파일을 두 번 올리면 매출 내역·미수금이 중복 등록됩니다. 다시 올릴 때는 \'지우고 교체\'를 선택해 주세요.</div>'}
         <div id="u-result"></div>
+        ${ledgerHtml}
         ${parsed.map((p) => sheetPreview(p)).join('')}
       </div>`;
+    if (fullBackup) el.querySelectorAll('#u-rs, #u-rr').forEach((c) => { c.checked = true; });
+    el.querySelectorAll('[data-lm]').forEach((inp) => inp.addEventListener('change', () => { ledgerSheets[Number(inp.dataset.lm)].month = inp.value; }));
+    ledgerSheets.forEach((sh) => { if (!sh.month) sh.month = thisMonth; });
     el.querySelector('#u-save')?.addEventListener('click', save);
   }
 
@@ -278,12 +317,21 @@ export async function render(main, ctx) {
     for (const p of parsed) if (p.type) body[p.type].push(...p.rows);
     body.replaceSalesYears = !!main.querySelector('#u-rs')?.checked;
     body.replaceReceivables = !!main.querySelector('#u-rr')?.checked;
+    body.replaceAllSales = fullBackup && body.replaceSalesYears; // 전체 백업 복원: 매출내역 전부 교체
     const result = main.querySelector('#u-result');
     const btn = main.querySelector('#u-save');
     btn.disabled = true;
     try {
-      const r = await api('/api/mgmt/import', { method: 'POST', body });
-      result.innerHTML = `<div class="notice">저장 완료 — 연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건, 매출내역 ${r.counts.sales}건, 미수금 ${r.counts.receivables}건. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
+      const months = new Set();
+      for (const sh of ledgerSheets) {
+        if (!/^\d{4}-\d{2}$/.test(sh.month || '')) throw new Error(`${sh.sheet}: 채권·채무 현황의 기준월을 입력해 주세요.`);
+        if (months.has(sh.month)) throw new Error(`기준월 ${sh.month}이(가) 두 번 있습니다. 시트마다 다른 기준월을 골라 주세요.`);
+        months.add(sh.month);
+      }
+      const hasData = Object.values(body).some((v) => Array.isArray(v) && v.length);
+      const r = hasData ? await api('/api/mgmt/import', { method: 'POST', body }) : { counts: { targets: 0, monthly: 0, sales: 0, receivables: 0 } };
+      for (const sh of ledgerSheets) await api(`/api/mgmt/ledger/${sh.month}`, { method: 'PUT', body: { entries: sh.entries } });
+      result.innerHTML = `<div class="notice">저장 완료 — 연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건, 매출내역 ${r.counts.sales}건, 미수금 ${r.counts.receivables}건${ledgerSheets.length ? `, 채권·채무 현황 ${ledgerSheets.length}개월 (${[...months].join(', ')})` : ''}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
       toast('업로드한 데이터를 저장했습니다.');
       await ctx.reloadMeta();
     } catch (err) {

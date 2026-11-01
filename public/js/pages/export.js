@@ -1,5 +1,5 @@
 import { api, esc, toast } from '../core.js';
-import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, downloadCsvZip, saveBlob, stamp } from '../exporter.js';
+import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, downloadCsvZip, saveBlob, downloadFull, stamp } from '../exporter.js';
 
 const KEYS = ['targets', 'monthly', 'sales', 'receivables'];
 const DESC = {
@@ -29,6 +29,7 @@ export async function render(main, ctx) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><h3>한 번에 받기</h3></div>
       <div class="filters">
+        <button class="btn brand" id="x-full" title="채권·채무 현황(회사 양식) + 연간목표·월별실적·매출내역·미수금을 한 파일로. 그대로 다시 업로드하면 전체 반영">⬇ 경영지원 관리 (전체 · 회사 양식)</button>
         <button class="btn primary" id="x-all">⬇ 전체 데이터 엑셀 (시트 4개)</button>
         <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ 전체 데이터 CSV (ZIP · 파일 4개)</button>
       </div>
@@ -85,6 +86,7 @@ export async function render(main, ctx) {
   };
   main.querySelector('#x-ledger-one').addEventListener('click', () => ledgerDown(main.querySelector('#x-ledger-month').value));
   main.querySelector('#x-ledger-all').addEventListener('click', () => ledgerDown('all'));
+  main.querySelector('#x-full').addEventListener('click', () => downloadFull());
   main.querySelector('tbody').addEventListener('click', (e) => {
     const k = e.target.dataset.x;
     if (!k || !data) return;

@@ -288,7 +288,7 @@ mgmt.delete('/receivables/:id', wrap(async (req, res) => {
 // ---------- 경영지원팀: 엑셀 일괄 업로드 (과거 데이터 이관) ----------
 // 클라이언트가 엑셀을 파싱해 JSON으로 보낸다. 행 단위 오류는 모아서 반환하고, 오류가 있으면 아무것도 저장하지 않는다.
 mgmt.post('/import', wrap(async (req, res) => {
-  const { targets = [], monthly = [], sales = [], receivables = [], replaceSalesYears = false, replaceReceivables = false } = req.body || {};
+  const { targets = [], monthly = [], sales = [], receivables = [], replaceSalesYears = false, replaceAllSales = false, replaceReceivables = false } = req.body || {};
   const errors = [];
   const check = (sheet, i, fn) => {
     try { return fn(); } catch (e) { errors.push(`[${sheet}] ${i + 2}행: ${e.message}`); return null; }
@@ -304,7 +304,8 @@ mgmt.post('/import', wrap(async (req, res) => {
   const stmts = [];
   for (const [year, revenue] of t) stmts.push(['INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue', [year, revenue]]);
   for (const x of m) stmts.push(upsertMonthly(x.year, x.month, x.r));
-  if (replaceSalesYears) {
+  if (replaceAllSales) stmts.push(['DELETE FROM sales', []]);
+  else if (replaceSalesYears) {
     for (const y of new Set(s.map((r) => r[0].slice(0, 4)))) stmts.push(['DELETE FROM sales WHERE substr(date,1,4) = ?', [y]]);
   }
   for (const r of s) stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', r]);
@@ -379,6 +380,32 @@ mgmt.get('/ledger-export', wrap(async (req, res) => {
   const name = `뉴토크코리아_경영지원관리_${months.length === 1 ? months[0] : `${months[0]}~${months[months.length - 1]}`}.xlsx`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="ledger.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(Buffer.from(buf));
+}));
+
+// 경영지원 관리 "전체" — 모든 경영지원팀 데이터를 회사 양식 스타일 엑셀 한 파일로
+mgmt.get('/full-export', wrap(async (_req, res) => {
+  const [targets, monthly, sales, receivables, saved] = await Promise.all([
+    db.all('SELECT year, revenue FROM targets ORDER BY year'),
+    db.all('SELECT * FROM monthly ORDER BY year, month'),
+    db.all('SELECT * FROM sales ORDER BY date, id'),
+    db.all('SELECT * FROM receivables ORDER BY invoice_date, id'),
+    ledger.listMonths(),
+  ]);
+  // 저장된 채권·채무 기준월 전부. 하나도 없으면 이번 달을 미수금 관리 데이터로 채워 넣는다
+  const now = new Date();
+  const monthList = saved.length ? saved.map((r) => r.month).sort()
+    : (receivables.length ? [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`] : []);
+  const months = [];
+  for (const month of monthList) {
+    let entries = await ledger.getEntries(month);
+    if (!entries.some((e) => e.section === 'ar')) entries = [...await ledger.receivablesToAr(month), ...entries];
+    months.push({ month, entries });
+  }
+  const buf = await ledger.buildFullWorkbook({ targets, monthly, sales, receivables }, months);
+  const name = `뉴토크코리아_경영지원관리_전체_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="full.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.send(Buffer.from(buf));
 }));
 
