@@ -1,5 +1,5 @@
 import { api, esc, toast } from '../core.js';
-import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, downloadCsvZip, stamp } from '../exporter.js';
+import { DATASETS, datasetSheet, downloadXlsx, downloadCsv, downloadCsvZip, saveBlob, stamp } from '../exporter.js';
 
 const KEYS = ['targets', 'monthly', 'sales', 'receivables'];
 const DESC = {
@@ -33,6 +33,15 @@ export async function render(main, ctx) {
         <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ 전체 데이터 CSV (ZIP · 파일 4개)</button>
       </div>
       <div class="hint" style="margin-top:10px" id="x-count"></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><div class="ttl"><h3>회사 양식 (경영지원 관리)</h3><span class="hint">외상매출금·외상매입금·미지급비용 — 회사 엑셀과 같은 서식으로, 기준월마다 시트 하나</span></div></div>
+      <div class="filters">
+        <input class="input" type="month" id="x-ledger-month" value="${new Date().toISOString().slice(0, 7)}" aria-label="기준월">
+        <button class="btn" id="x-ledger-one">⬇ 이 달</button>
+        <button class="btn" id="x-ledger-all">⬇ 저장된 전체 월</button>
+        <a class="btn" href="#/input/ledger">채권·채무 현황 편집 →</a>
+      </div>
     </div>
     <div class="card">
       <div class="card-head"><h3>항목별로 받기</h3><span class="hint">CSV는 한 파일에 표 하나만 담기므로 항목별로 받습니다</span></div>
@@ -68,6 +77,14 @@ export async function render(main, ctx) {
     e.target.disabled = false;
     toast('CSV 파일 4개를 ZIP으로 내려받았습니다.');
   });
+  const ledgerDown = async (months) => {
+    const res = await fetch(`/api/mgmt/ledger-export?months=${encodeURIComponent(months)}`, { credentials: 'same-origin' });
+    if (!res.ok) return toast((await res.json().catch(() => null))?.error || '내려받기에 실패했습니다.', true);
+    const cd = res.headers.get('Content-Disposition') || '';
+    saveBlob(decodeURIComponent((cd.match(/filename\*=UTF-8''([^;]+)/) || [])[1] || 'ledger.xlsx'), await res.blob());
+  };
+  main.querySelector('#x-ledger-one').addEventListener('click', () => ledgerDown(main.querySelector('#x-ledger-month').value));
+  main.querySelector('#x-ledger-all').addEventListener('click', () => ledgerDown('all'));
   main.querySelector('tbody').addEventListener('click', (e) => {
     const k = e.target.dataset.x;
     if (!k || !data) return;

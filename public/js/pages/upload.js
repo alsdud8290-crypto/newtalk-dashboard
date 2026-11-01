@@ -100,7 +100,12 @@ function toIndustry(v, warn) {
 function parseSheet(name, ws) {
   const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
   const type = detectType(name, aoa.slice(0, 10).flat());
-  if (!type) return { name, type: null, rows: [], warnings: ['시트 종류를 알 수 없어 건너뜁니다.'] };
+  if (!type) {
+    const company = aoa.slice(0, 5).flat().some((c) => /외상매출금|외상매입금|미지급비용/.test(String(c)));
+    return { name, type: null, rows: [], warnings: [company
+      ? '회사 양식(경영지원 관리)입니다. [채권·채무 현황] 메뉴의 "⬆ 회사 양식 업로드"로 올려 주세요.'
+      : '시트 종류를 알 수 없어 건너뜁니다.'] };
+  }
   const hi = findHeader(aoa, type);
   if (hi < 0) return { name, type, rows: [], warnings: ['헤더(열 이름) 행을 찾지 못했습니다.'] };
   const headers = aoa[hi].map(norm);

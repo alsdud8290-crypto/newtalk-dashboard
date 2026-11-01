@@ -5,6 +5,7 @@ import * as sales from './pages/sales.js';
 import * as receivables from './pages/receivables.js';
 import * as upload from './pages/upload.js';
 import * as exportPage from './pages/export.js';
+import * as ledgerPage from './pages/ledger.js';
 import * as users from './pages/users.js';
 import * as placeholder from './pages/placeholder.js';
 
@@ -17,6 +18,7 @@ const ROUTES = {
   '/input/monthly': { page: monthly, perm: 'mgmt', title: '월별 실적·목표' },
   '/input/sales': { page: sales, perm: 'mgmt', title: '매출 내역' },
   '/input/receivables': { page: receivables, perm: 'mgmt', title: '미수금 관리' },
+  '/input/ledger': { page: ledgerPage, perm: 'mgmt', title: '채권·채무 현황' },
   '/upload': { page: upload, perm: 'mgmt', title: '엑셀 업로드' },
   '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
   '/production': { page: placeholder, perm: 'production', title: '생산팀', team: 'production' },
@@ -40,6 +42,7 @@ const MENU = [
     ['/input/monthly', '월별 실적·목표 입력'],
     ['/input/sales', '매출 내역 (판매처)'],
     ['/input/receivables', '미수금 관리'],
+    ['/input/ledger', '채권·채무 현황 (회사 양식)'],
     ['/upload', '엑셀 업로드·데이터 이관'],
     ['/export', '데이터 내보내기'],
   ] },

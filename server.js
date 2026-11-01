@@ -7,6 +7,7 @@ import {
 } from './lib/auth.js';
 import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
+import * as ledger from './lib/ledger.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -326,6 +327,61 @@ mgmt.get('/export', wrap(async (req, res) => {
   res.json({ targets, monthly, sales, receivables });
 }));
 
+// ---------- 경영지원팀: 채권·채무 현황 (회사 양식 "경영지원 관리") ----------
+const ledgerMonth = (m) => {
+  if (!ledger.validMonth(m)) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${m || '(빈 값)'}`);
+  return m;
+};
+mgmt.get('/ledger/months', wrap(async (_req, res) => res.json(await ledger.listMonths())));
+mgmt.get('/ledger/:month', wrap(async (req, res) => {
+  const month = ledgerMonth(req.params.month);
+  res.json({ month, entries: await ledger.getEntries(month) });
+}));
+mgmt.put('/ledger/:month', wrap(async (req, res) => {
+  const month = ledgerMonth(req.params.month);
+  const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+  try {
+    res.json({ ok: true, count: await ledger.replaceMonth(month, entries) });
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+}));
+// 미수금 관리 데이터로 외상매출금 자동 채우기 (저장하지 않고 미리보기만)
+mgmt.get('/ledger/:month/from-receivables', wrap(async (req, res) => {
+  res.json({ entries: await ledger.receivablesToAr(ledgerMonth(req.params.month)) });
+}));
+// 회사 양식 엑셀 읽기 (업로드 미리보기). 저장은 PUT 으로 따로
+mgmt.post('/ledger/parse', wrap(async (req, res) => {
+  const b64 = String(req.body?.file || '');
+  if (!b64) throw new HttpError(400, '파일이 없습니다.');
+  try {
+    res.json({ sheets: await ledger.parseWorkbook(Buffer.from(b64, 'base64')) });
+  } catch (e) {
+    throw new HttpError(400, `엑셀 파일을 읽을 수 없습니다: ${e.message}`);
+  }
+}));
+// 회사 양식으로 내려받기: months=2026-09 또는 2026-08,2026-09 또는 all (기준월마다 시트 하나)
+// 외상매출금이 비어 있는 달은 미수금 관리 데이터로 채운다 (fill=0 이면 끔)
+mgmt.get('/ledger-export', wrap(async (req, res) => {
+  const q = String(req.query.months || '');
+  let months = q === 'all' ? (await ledger.listMonths()).map((r) => r.month).sort() : q.split(',').filter(Boolean);
+  months.forEach(ledgerMonth);
+  if (!months.length) throw new HttpError(400, '내려받을 기준월이 없습니다. 먼저 채권·채무 현황을 입력하거나 업로드해 주세요.');
+  if (months.length > 60) months = months.slice(-60);
+  const fill = req.query.fill !== '0';
+  const data = [];
+  for (const month of months) {
+    let entries = await ledger.getEntries(month);
+    if (fill && !entries.some((e) => e.section === 'ar')) entries = [...await ledger.receivablesToAr(month), ...entries];
+    data.push({ month, entries });
+  }
+  const buf = await ledger.buildWorkbook(data);
+  const name = `뉴토크코리아_경영지원관리_${months.length === 1 ? months[0] : `${months[0]}~${months[months.length - 1]}`}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="ledger.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(Buffer.from(buf));
+}));
+
 app.use('/api/mgmt', mgmt);
 
 // ---------- 관리자: 사용자 / 권한 ----------
@@ -377,6 +433,36 @@ admin.post('/users/:id/reset-password', wrap(async (req, res) => {
   if (!r.changes) throw new HttpError(404, '사용자를 찾을 수 없습니다.');
   await db.run('DELETE FROM sessions WHERE user_id = ?', id);
   res.json({ ok: true });
+}));
+
+// 화면 확인용 샘플 직원 (이름에 '(샘플)'). 이미 있는 아이디는 건너뜀
+const SAMPLE_STAFF = [
+  ['s.ceo', '박성훈(샘플)', '대표'],
+  ['s.mgmt1', '김지현(샘플)', '경영지원팀'],
+  ['s.mgmt2', '이수민(샘플)', '경영지원팀', { admin: 0 }],
+  ['s.mgmt3', '정다은(샘플)', '경영지원팀', { admin: 0 }],
+  ['s.dual1', '최민호(샘플)', '생산·서비스 겸직'],
+  ['s.dual2', '강태윤(샘플)', '생산·서비스 겸직'],
+  ['s.dual3', '윤서진(샘플)', '생산·서비스 겸직'],
+  ['s.dual4', '한동욱(샘플)', '생산·서비스 겸직'],
+  ['s.dual5', '조은비(샘플)', '생산·서비스 겸직'],
+  ['s.prod1', '오재현(샘플)', '생산팀'],
+  ['s.prod2', '서현우(샘플)', '생산팀', { mgmt: 1 }],
+  ['s.svc1', '임채원(샘플)', '서비스팀'],
+  ['s.svc2', '송유진(샘플)', '서비스팀', null, false],
+];
+const SAMPLE_PASSWORD = 'sample1234!';
+app.post('/api/admin/sample-users', requirePerm('admin'), wrap(async (_req, res) => {
+  let added = 0;
+  for (const [username, name, dept, extra, active = true] of SAMPLE_STAFF) {
+    if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) continue;
+    const p = { ...defaultPerms(dept), ...(extra || {}) };
+    await db.run(`INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin, active, must_change_pw)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    username, name, dept, hashPassword(SAMPLE_PASSWORD), ...PERMS.map((k) => (p[k] ? 1 : 0)), active ? 1 : 0);
+    added += 1;
+  }
+  res.json({ added, total: SAMPLE_STAFF.length, password: SAMPLE_PASSWORD });
 }));
 
 app.get('/api/admin/default-perms', requirePerm('admin'), (_req, res) => res.json(Object.fromEntries(DEPTS.map((d) => [d, defaultPerms(d)]))));
