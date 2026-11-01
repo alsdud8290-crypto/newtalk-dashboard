@@ -265,7 +265,7 @@ function cleanRecv(b) {
   const customer = str(b.customer);
   if (!customer) throw new HttpError(400, '거래처를 입력해 주세요.');
   return [customer, date(b.invoice_date, '청구일자'), num(b.amount), num(b.collected),
-    date(b.collected_date, '수금일자', true), date(b.due_date, '결제예정일', true), str(b.note)];
+    date(b.collected_date, '수금일자', true), date(b.due_date, '결제예정일', true), str(b.note), str(b.code)];
 }
 
 mgmt.get('/receivables', wrap(async (req, res) => {
@@ -273,11 +273,12 @@ mgmt.get('/receivables', wrap(async (req, res) => {
   res.json(await db.all(`SELECT * FROM receivables ${where} ORDER BY invoice_date DESC, id DESC`));
 }));
 mgmt.post('/receivables', wrap(async (req, res) => {
-  const r = await db.run('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', ...cleanRecv(req.body || {}));
+  const r = await db.run('INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note, code) VALUES (?,?,?,?,?,?,?,?)', ...cleanRecv(req.body || {}));
   res.json({ id: Number(r.lastInsertRowid) });
 }));
 mgmt.put('/receivables/:id', wrap(async (req, res) => {
-  await db.run('UPDATE receivables SET customer=?, invoice_date=?, amount=?, collected=?, collected_date=?, due_date=?, note=? WHERE id=?', ...cleanRecv(req.body || {}), Number(req.params.id));
+  // 화면에서 코드를 보내지 않으면 기존 코드 유지
+  await db.run("UPDATE receivables SET customer=?, invoice_date=?, amount=?, collected=?, collected_date=?, due_date=?, note=?, code=COALESCE(NULLIF(?, ''), code) WHERE id=?", ...cleanRecv(req.body || {}), Number(req.params.id));
   res.json({ ok: true });
 }));
 mgmt.delete('/receivables/:id', wrap(async (req, res) => {
@@ -310,7 +311,7 @@ mgmt.post('/import', wrap(async (req, res) => {
   }
   for (const r of s) stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', r]);
   if (replaceReceivables) stmts.push(['DELETE FROM receivables', []]);
-  for (const r of rv) stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', r]);
+  for (const r of rv) stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note, code) VALUES (?,?,?,?,?,?,?,?)', r]);
   await db.batch(stmts);
   res.json({ ok: true, counts: { targets: t.length, monthly: m.length, sales: s.length, receivables: rv.length } });
 }));
@@ -328,31 +329,9 @@ mgmt.get('/export', wrap(async (req, res) => {
   res.json({ targets, monthly, sales, receivables });
 }));
 
-// ---------- 경영지원팀: 채권·채무 현황 (회사 양식 "경영지원 관리") ----------
-const ledgerMonth = (m) => {
-  if (!ledger.validMonth(m)) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${m || '(빈 값)'}`);
-  return m;
-};
-mgmt.get('/ledger/months', wrap(async (_req, res) => res.json(await ledger.listMonths())));
-mgmt.get('/ledger/:month', wrap(async (req, res) => {
-  const month = ledgerMonth(req.params.month);
-  res.json({ month, entries: await ledger.getEntries(month) });
-}));
-mgmt.put('/ledger/:month', wrap(async (req, res) => {
-  const month = ledgerMonth(req.params.month);
-  const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
-  try {
-    res.json({ ok: true, count: await ledger.replaceMonth(month, entries) });
-  } catch (e) {
-    throw new HttpError(400, e.message);
-  }
-}));
-// 미수금 관리 데이터로 외상매출금 자동 채우기 (저장하지 않고 미리보기만)
-mgmt.get('/ledger/:month/from-receivables', wrap(async (req, res) => {
-  res.json({ entries: await ledger.receivablesToAr(ledgerMonth(req.params.month)) });
-}));
-// 회사 양식 엑셀 읽기 (업로드 미리보기). 저장은 PUT 으로 따로
-mgmt.post('/ledger/parse', wrap(async (req, res) => {
+// ---------- 경영지원팀: 회사 양식 "경영지원 관리" (별도 탭 없이 모든 내려받기·업로드에 사용) ----------
+// 회사 양식 엑셀 읽기 (업로드 미리보기). 반영은 /company/import
+mgmt.post('/company/parse', wrap(async (req, res) => {
   const b64 = String(req.body?.file || '');
   if (!b64) throw new HttpError(400, '파일이 없습니다.');
   try {
@@ -361,51 +340,62 @@ mgmt.post('/ledger/parse', wrap(async (req, res) => {
     throw new HttpError(400, `엑셀 파일을 읽을 수 없습니다: ${e.message}`);
   }
 }));
-// 회사 양식으로 내려받기: months=2026-09 또는 2026-08,2026-09 또는 all (기준월마다 시트 하나)
-// 외상매출금이 비어 있는 달은 미수금 관리 데이터로 채운다 (fill=0 이면 끔)
-mgmt.get('/ledger-export', wrap(async (req, res) => {
-  const q = String(req.query.months || '');
-  let months = q === 'all' ? (await ledger.listMonths()).map((r) => r.month).sort() : q.split(',').filter(Boolean);
-  months.forEach(ledgerMonth);
-  if (!months.length) throw new HttpError(400, '내려받을 기준월이 없습니다. 먼저 채권·채무 현황을 입력하거나 업로드해 주세요.');
-  if (months.length > 60) months = months.slice(-60);
-  const fill = req.query.fill !== '0';
-  const data = [];
-  for (const month of months) {
-    let entries = await ledger.getEntries(month);
-    if (fill && !entries.some((e) => e.section === 'ar')) entries = [...await ledger.receivablesToAr(month), ...entries];
-    data.push({ month, entries });
+// 회사 양식 한 달 반영: 외상매출금 → 미수금 관리, 외상매입금·미지급비용 → 월별실적 지출 칸
+mgmt.post('/company/import', wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!ledger.validMonth(b.month)) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${b.month || '(빈 값)'}`);
+  try {
+    res.json(await ledger.importCompanyMonth(b.month, Array.isArray(b.entries) ? b.entries : [],
+      { applyMonthly: b.applyMonthly !== false, applyReceivables: b.applyReceivables !== false }));
+  } catch (e) {
+    throw new HttpError(400, e.message);
   }
-  const buf = await ledger.buildWorkbook(data);
-  const name = `뉴토크코리아_경영지원관리_${months.length === 1 ? months[0] : `${months[0]}~${months[months.length - 1]}`}.xlsx`;
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="ledger.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
-  res.send(Buffer.from(buf));
 }));
-
-// 경영지원 관리 "전체" — 모든 경영지원팀 데이터를 회사 양식 스타일 엑셀 한 파일로
-mgmt.get('/full-export', wrap(async (_req, res) => {
-  const [targets, monthly, sales, receivables, saved] = await Promise.all([
-    db.all('SELECT year, revenue FROM targets ORDER BY year'),
-    db.all('SELECT * FROM monthly ORDER BY year, month'),
-    db.all('SELECT * FROM sales ORDER BY date, id'),
-    db.all('SELECT * FROM receivables ORDER BY invoice_date, id'),
-    ledger.listMonths(),
-  ]);
-  // 저장된 채권·채무 기준월 전부. 하나도 없으면 이번 달을 미수금 관리 데이터로 채워 넣는다
+// 모든 엑셀 내려받기 (회사 양식 서식)
+//   kind=full      : 안내 + 기준월마다 회사 양식 + 연간목표·월별실적·매출내역·미수금 (year 있으면 그 해만)
+//   kind=monthly   : year 의 기준월 회사 양식 + 연간목표·월별실적
+//   kind=receivables: 이번 달 회사 양식(외상매출금) + 미수금 상세 (open=1 미수 건만, q 검색)
+//   kind=sales     : 매출내역 (year, q)
+//   kind=targets   : 연간목표
+mgmt.get('/xlsx', wrap(async (req, res) => {
+  const kind = String(req.query.kind || 'full');
+  const y = req.query.year ? intParam(req.query.year, 2000, 2100, '연도') : null;
+  const q = String(req.query.q || '').trim().toLowerCase();
   const now = new Date();
-  const monthList = saved.length ? saved.map((r) => r.month).sort()
-    : (receivables.length ? [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`] : []);
-  const months = [];
-  for (const month of monthList) {
-    let entries = await ledger.getEntries(month);
-    if (!entries.some((e) => e.section === 'ar')) entries = [...await ledger.receivablesToAr(month), ...entries];
-    months.push({ month, entries });
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const like = (fields) => (r) => !q || fields.map((f) => String(r[f] ?? '')).join(' ').toLowerCase().includes(q);
+  const targets = () => (y ? db.all('SELECT year, revenue FROM targets WHERE year = ?', y) : db.all('SELECT year, revenue FROM targets ORDER BY year'));
+  const monthly = () => (y ? db.all('SELECT * FROM monthly WHERE year = ? ORDER BY month', y) : db.all('SELECT * FROM monthly ORDER BY year, month'));
+  const sales = async () => (await (y ? db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date, id', String(y)) : db.all('SELECT * FROM sales ORDER BY date, id')))
+    .filter(like(['customer', 'series', 'note']));
+  const receivables = async () => (await db.all(`SELECT * FROM receivables ${req.query.open === '1' ? 'WHERE amount - collected > 0.5' : ''} ORDER BY invoice_date, id`))
+    .filter(like(['customer']));
+  let spec;
+  let label;
+  if (kind === 'monthly') {
+    spec = { months: await ledger.monthsWithData(y), data: { targets: await targets(), monthly: await monthly() } };
+    label = `월별실적_${y || '전체'}`;
+  } else if (kind === 'receivables') {
+    spec = { months: [thisMonth], data: { receivables: await receivables() } };
+    label = `미수금_${thisMonth}`;
+  } else if (kind === 'sales') {
+    spec = { data: { sales: await sales() } };
+    label = `매출내역_${y || '전체'}`;
+  } else if (kind === 'targets') {
+    spec = { data: { targets: await targets() } };
+    label = '연간목표';
+  } else {
+    const months = await ledger.monthsWithData(y);
+    const rec = await db.all(`SELECT * FROM receivables ${y ? 'WHERE substr(invoice_date,1,4) = ?' : ''} ORDER BY invoice_date, id`, ...(y ? [String(y)] : []));
+    if (!months.includes(thisMonth) && rec.length && (!y || y === now.getFullYear())) months.push(thisMonth);
+    spec = { guide: true, months: months.sort(), data: { targets: await targets(), monthly: await monthly(), sales: await sales(), receivables: rec } };
+    label = `전체_${y || ''}`.replace(/_$/, '');
   }
-  const buf = await ledger.buildFullWorkbook({ targets, monthly, sales, receivables }, months);
-  const name = `뉴토크코리아_경영지원관리_전체_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.xlsx`;
+  const buf = await ledger.buildCompanyWorkbook(spec);
+  const stampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const name = `뉴토크코리아_경영지원관리_${label}${q ? `_${q}` : ''}_${stampStr}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="full.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.send(Buffer.from(buf));
 }));
 

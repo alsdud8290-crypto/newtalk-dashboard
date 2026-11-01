@@ -1,5 +1,5 @@
 import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today } from '../core.js';
-import { datasetSheet, downloadXlsx, downloadCsv, exportButtons, fileSafe, stamp } from '../exporter.js';
+import { datasetSheet, downloadCsv, downloadCompany, exportButtons, fileSafe, stamp } from '../exporter.js';
 
 export async function render(main, ctx) {
   let year = period.year;
@@ -76,7 +76,7 @@ export async function render(main, ctx) {
   // 화면에 보이는 목록(연도·검색 반영)을 그대로 내려받기
   const shown = () => (filter ? rows.filter((r) => `${r.customer} ${r.series} ${r.note}`.toLowerCase().includes(filter.toLowerCase())) : rows);
   const exportName = () => fileSafe(`뉴토크코리아_매출내역_${year}년${filter ? `_${filter}` : ''}_${stamp()}`);
-  main.querySelector('#s-xlsx').addEventListener('click', () => downloadXlsx(exportName(), [datasetSheet('sales', [...shown()].reverse())]));
+  main.querySelector('#s-xlsx').addEventListener('click', () => downloadCompany({ kind: 'sales', year, q: filter }));
   main.querySelector('#s-csv').addEventListener('click', () => downloadCsv(exportName(), datasetSheet('sales', [...shown()].reverse())));
   main.querySelector('#s-table').addEventListener('click', async (e) => {
     const id = Number(e.target.dataset.edit || e.target.dataset.del);

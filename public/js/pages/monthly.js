@@ -1,5 +1,5 @@
 import { api, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions } from '../core.js';
-import { datasetSheet, downloadXlsx, downloadCsv, stamp } from '../exporter.js';
+import { datasetSheet, downloadCsv, downloadCompany, stamp } from '../exporter.js';
 
 export const FIELDS = [
   ['product_sales', '제품 매출액', 'sales'],
@@ -127,12 +127,10 @@ export async function render(main, ctx) {
     year, month: Number(tr.dataset.month),
     ...Object.fromEntries(FIELDS.map(([f]) => [f, parseMoney(tr.querySelector(`[name=${f}]`).value)])),
   }));
+  // 엑셀: 회사 양식(경영지원 관리) — 달마다 시트 + 연간목표·월별실적 상세 (저장된 값 기준)
   main.querySelector('#m-xlsx').addEventListener('click', () => {
-    if (dirty) toast('저장하지 않은 변경 사항도 화면 그대로 포함됩니다.');
-    downloadXlsx(`뉴토크코리아_월별실적_${year}년_${stamp()}`, [
-      datasetSheet('targets', [{ year, revenue: parseMoney(tInput.value) }]),
-      datasetSheet('monthly', tableRows()),
-    ]);
+    if (dirty) toast('저장하지 않은 변경 사항은 엑셀에 들어가지 않습니다. 먼저 저장해 주세요.', true);
+    downloadCompany({ kind: 'monthly', year });
   });
   main.querySelector('#m-csv').addEventListener('click', () => downloadCsv(`뉴토크코리아_월별실적_${year}년_${stamp()}`, datasetSheet('monthly', tableRows())));
 

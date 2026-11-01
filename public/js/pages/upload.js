@@ -1,4 +1,4 @@
-import { downloadFull } from '../exporter.js';
+import { downloadCompany } from '../exporter.js';
 import { api, esc, comma, toast } from '../core.js';
 
 // 시트 종류별 열 이름 별칭. 기존 엑셀의 열 이름이 달라도 아래 중 하나와 맞으면 인식한다.
@@ -31,7 +31,7 @@ const SCHEMAS = {
   receivables: {
     title: '미수금',
     cols: {
-      customer: ['거래처', '거래처명', '업체명', '상호', '판매처'], invoice_date: ['청구일자', '청구일', '발행일', '계산서일자', '세금계산서일자', '일자'],
+      code: ['코드', '거래처코드'], customer: ['거래처', '거래처명', '업체명', '상호', '판매처'], invoice_date: ['청구일자', '청구일', '발행일', '계산서일자', '세금계산서일자', '일자'],
       amount: ['청구액', '청구금액', '합계금액', '금액'], collected: ['수금액', '입금액', '수금금액'],
       collected_date: ['수금일자', '수금일', '입금일', '입금일자'], due_date: ['결제예정일', '수금예정일', '만기일', '결제일'], note: ['비고', '메모'],
     },
@@ -194,7 +194,7 @@ export async function render(main, ctx) {
     <div class="page-head">
       <div><h2>엑셀 업로드 · 과거 데이터 이관</h2><div class="sub">기존 엑셀(수금 등) 파일을 올려 한 번에 반영합니다. 저장 전 미리보기로 확인할 수 있습니다.</div></div>
       <div class="filters">
-        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 회사 양식 스타일 엑셀 한 파일로">⬇ 경영지원 관리 (전체)</button>
+        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 경영지원 관리 양식 엑셀 한 파일로">⬇ 현재 데이터 전체 (경영지원 관리 양식)</button>
         <button class="btn" id="u-tpl">⬇ 업로드 양식 다운로드</button>
       </div>
     </div>
@@ -217,7 +217,7 @@ export async function render(main, ctx) {
     <div id="u-preview"></div>`;
 
   main.querySelector('#u-tpl').addEventListener('click', downloadTemplate);
-  main.querySelector('#u-full').addEventListener('click', () => downloadFull());
+  main.querySelector('#u-full').addEventListener('click', () => downloadCompany({ kind: 'full' }));
   const drop = main.querySelector('#u-drop');
   const input = main.querySelector('#u-file');
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
@@ -248,7 +248,7 @@ export async function render(main, ctx) {
         // 회사 양식 시트는 서식(병합·글자색)까지 봐야 해서 서버에서 읽는다
         if (hasCompany && /\.xlsx$/i.test(f.name)) {
           const b64 = btoa(Array.from(new Uint8Array(buf), (b) => String.fromCharCode(b)).join(''));
-          const r = await api('/api/mgmt/ledger/parse', { method: 'POST', body: { file: b64 } });
+          const r = await api('/api/mgmt/company/parse', { method: 'POST', body: { file: b64 } });
           r.sheets.forEach((sh) => ledgerSheets.push({ file: f.name, ...sh }));
         }
       } catch (err) {
@@ -261,14 +261,17 @@ export async function render(main, ctx) {
 
   function preview() {
     const el = main.querySelector('#u-preview');
-    if (!parsed.length) { el.innerHTML = ''; return; }
+    if (!parsed.length && !ledgerSheets.length) { el.innerHTML = ''; return; }
     const usable = parsed.filter((p) => p.type && p.rows.length);
     const hasSales = usable.some((p) => p.type === 'sales');
     const hasRecv = usable.some((p) => p.type === 'receivables');
     const thisMonth = new Date().toISOString().slice(0, 7);
     const secNames = { ar: '외상매출금', ap: '외상매입금', staff: '미지급비용-직원', vendor: '미지급비용-업체' };
     const ledgerHtml = ledgerSheets.length ? `
-      <div style="margin:16px 0 8px"><b>채권·채무 현황 (회사 양식)</b> <span class="hint">기준월마다 그 달의 기존 내용을 바꿉니다</span></div>
+      <div style="margin:16px 0 8px"><b>경영지원 관리 (회사 양식)</b> <span class="badge blue">${ledgerSheets.length}개월</span></div>
+      <div class="notice" style="margin-bottom:10px">시트마다 기준월을 확인해 주세요. 저장하면
+        <b>외상매출금 → 미수금 관리</b>(가장 최근 기준월의 내용으로 교체${hasRecv ? ' — 파일에 미수금 상세 시트가 있어 그쪽을 씁니다' : ''}),
+        <b>외상매입금 → 월별 실적 상품·원재료 매입</b>, <b>미지급비용-직원 → 경비</b>, <b>미지급비용-업체 → 광고선전비·접대비·그 외 지출</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th>건수</th></tr></thead><tbody>
       ${ledgerSheets.map((sh, k) => `<tr><td>${esc(sh.file)} › ${esc(sh.sheet)}</td>
         <td><input class="input" type="month" data-lm="${k}" value="${sh.month || thisMonth}" style="width:160px"></td>
@@ -284,7 +287,7 @@ export async function render(main, ctx) {
           </div>
         </div>
         ${fullBackup
-          ? '<div class="notice" style="margin-bottom:12px"><b>경영지원 관리 (전체) 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적·채권·채무 현황은 파일에 있는 연도·월만 덮어씁니다.</div>'
+          ? '<div class="notice" style="margin-bottom:12px"><b>전체 데이터 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적은 파일에 있는 연도·월만 덮어씁니다.</div>'
           : '<div class="notice" style="margin-bottom:12px">같은 파일을 두 번 올리면 매출 내역·미수금이 중복 등록됩니다. 다시 올릴 때는 \'지우고 교체\'를 선택해 주세요.</div>'}
         <div id="u-result"></div>
         ${ledgerHtml}
@@ -324,14 +327,31 @@ export async function render(main, ctx) {
     try {
       const months = new Set();
       for (const sh of ledgerSheets) {
-        if (!/^\d{4}-\d{2}$/.test(sh.month || '')) throw new Error(`${sh.sheet}: 채권·채무 현황의 기준월을 입력해 주세요.`);
+        if (!/^\d{4}-\d{2}$/.test(sh.month || '')) throw new Error(`${sh.sheet}: 경영지원 관리 시트의 기준월을 입력해 주세요.`);
         if (months.has(sh.month)) throw new Error(`기준월 ${sh.month}이(가) 두 번 있습니다. 시트마다 다른 기준월을 골라 주세요.`);
         months.add(sh.month);
       }
       const hasData = Object.values(body).some((v) => Array.isArray(v) && v.length);
       const r = hasData ? await api('/api/mgmt/import', { method: 'POST', body }) : { counts: { targets: 0, monthly: 0, sales: 0, receivables: 0 } };
-      for (const sh of ledgerSheets) await api(`/api/mgmt/ledger/${sh.month}`, { method: 'PUT', body: { entries: sh.entries } });
-      result.innerHTML = `<div class="notice">저장 완료 — 연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건, 매출내역 ${r.counts.sales}건, 미수금 ${r.counts.receivables}건${ledgerSheets.length ? `, 채권·채무 현황 ${ledgerSheets.length}개월 (${[...months].join(', ')})` : ''}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
+      // 회사 양식 시트 반영: 월별실적 시트에 그 달이 있으면 그 값을 우선, 미수금 상세 시트가 있으면 그쪽을 우선
+      const monthlyInFile = new Set(body.monthly.map((m) => `${m.year}-${String(m.month).replace(/\D/g, '').padStart(2, '0')}`));
+      const latest = [...months].sort().pop();
+      let recvFromCompany = null;
+      const costMonths = [];
+      for (const sh of ledgerSheets) {
+        const out = await api('/api/mgmt/company/import', { method: 'POST', body: {
+          month: sh.month, entries: sh.entries,
+          applyMonthly: !monthlyInFile.has(sh.month),
+          applyReceivables: !body.receivables.length && sh.month === latest,
+        } });
+        if (out.receivables !== null) recvFromCompany = out.receivables;
+        if (out.monthly) costMonths.push(sh.month);
+      }
+      const recvCount = recvFromCompany !== null ? `${recvFromCompany}건 (외상매출금 ${latest} 기준)` : `${r.counts.receivables}건`;
+      const companyNote = !ledgerSheets.length ? ''
+        : costMonths.length ? ` + 경영지원 관리 지출 반영 ${costMonths.length}개월(${costMonths.join(', ')})`
+          : recvFromCompany === null && !body.monthly.length ? ' · 경영지원 관리 시트에 반영할 내용(거래처·금액)이 없었습니다' : '';
+      result.innerHTML = `<div class="notice">저장 완료 — 연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건${companyNote}, 매출내역 ${r.counts.sales}건, 미수금 ${recvCount}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
       toast('업로드한 데이터를 저장했습니다.');
       await ctx.reloadMeta();
     } catch (err) {

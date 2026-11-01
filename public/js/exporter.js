@@ -27,7 +27,7 @@ export const DATASETS = {
   receivables: {
     sheet: '미수금',
     cols: [
-      ['customer', '거래처'], ['invoice_date', '청구일자'], ['amount', '청구액', money], ['collected', '수금액', money],
+      ['code', '코드'], ['customer', '거래처'], ['invoice_date', '청구일자'], ['amount', '청구액', money], ['collected', '수금액', money],
       ['collected_date', '수금일자'], ['due_date', '결제예정일'],
       [(r) => n(r.amount) - n(r.collected), '잔액', money], // 참고용
       ['note', '비고'],
@@ -134,11 +134,12 @@ export const exportButtons = (prefix) => `
   <button type="button" class="btn" id="${prefix}-xlsx" title="엑셀 파일로 내려받기">⬇ 엑셀</button>
   <button type="button" class="btn" id="${prefix}-csv" title="CSV 파일로 내려받기">⬇ CSV</button>`;
 
-// 경영지원 관리 (전체) — 서버가 회사 양식 스타일로 만든 엑셀 한 파일
-export async function downloadFull() {
-  const res = await fetch('/api/mgmt/full-export', { credentials: 'same-origin' });
+// 엑셀 내려받기 (모두 회사 "경영지원 관리" 양식 서식) — params: { kind, year, q, open }
+export async function downloadCompany(params = {}) {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString();
+  const res = await fetch(`/api/mgmt/xlsx?${qs}`, { credentials: 'same-origin' });
   if (!res.ok) return toast((await res.json().catch(() => null))?.error || '내려받기에 실패했습니다.', true);
   const cd = res.headers.get('Content-Disposition') || '';
-  saveBlob(decodeURIComponent((cd.match(/filename\*=UTF-8''([^;]+)/) || [])[1] || 'full.xlsx'), await res.blob());
-  toast('경영지원 관리 (전체) 파일을 내려받았습니다.');
+  saveBlob(decodeURIComponent((cd.match(/filename\*=UTF-8''([^;]+)/) || [])[1] || 'export.xlsx'), await res.blob());
 }
+export const downloadFull = (year) => downloadCompany({ kind: 'full', year });
