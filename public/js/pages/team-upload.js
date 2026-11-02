@@ -11,6 +11,24 @@ const UPLOADS = {
     tips: ['위쪽 작성방법·두 줄 제목은 자동으로 건너뜁니다 ("일련번호" 제목 칸을 찾아 그 아래부터).', '일련번호·모델명·검사번호의 앞부분(N8226, NTI-, NTK26)은 셀 표시 형식에서 읽습니다.',
       '일련번호가 없는 행(오른쪽 숫자만 있는 행)은 제외합니다.', '같은 파일에 같은 일련번호가 여러 번 나오면 마지막 행 기준입니다.'],
   },
+  sales_order_pdf: {
+    title: '수주서 PDF 업로드', team: 'production', accept: '.pdf',
+    sub: '수주서 PDF(1쪽 = 수주서 1건)를 올리면 판매정보와 제품정보를 읽습니다. 확인 표는 제품 1개 = 1행이고, 같은 판매번호가 이미 있으면 건너뜁니다.',
+    tips: ['PDF에서 긴 값이 "…"로 잘려 있으면 오류로 표시됩니다. 전체 값으로 고쳐 주세요.', '사업구분은 7개 산업 분야로 바꿔 보여 줍니다(모르는 값은 기타). 확인 표에서 바꿀 수 있습니다.',
+      '수주서류 번호는 "#26024 …"에서 번호만 저장합니다.', '같은 판매번호의 행끼리는 주문 정보가 같아야 합니다.'],
+  },
+  trip_report_pdf: {
+    title: '출장보고서 PDF 업로드', team: 'service', accept: '.pdf',
+    sub: '출장보고서 PDF(1쪽 = 보고서 1건)를 올리면 출장정보·제품·교체 부품·작업 내용을 읽습니다. 검사 규칙은 직접 입력과 같습니다.',
+    tips: ['요청처의 시·도·시·군이 기억돼 있으면 자동으로 채우고, 없으면 확인 표에서 골라 주세요(저장하면 기억).', '잘린 값(…), 특히 긴 부품명은 전체 값으로 고쳐 주세요.',
+      '같은 출장 시작일·요청처의 보고서가 있으면 건너뜁니다. 실제로 두 번 간 경우 "중복 아님"을 체크하세요.'],
+  },
+  quote_pdf: {
+    title: '견적서 PDF 업로드', team: 'service', accept: '.pdf', back: '#/prices/parts', backLabel: '부품별 비교',
+    sub: '유상 A/S 견적서 PDF를 올리면 품목마다 단가를 읽어 출장지(업체)별 부품 단가로 저장합니다. 적용 시작일 = 견적 날짜, 출장지 = 업체명.',
+    tips: ['견적서 품명마다 단가표의 파트넘버를 골라 주세요. 한 번 고르면 다음 견적서부터 자동으로 채웁니다.', '수량 × 단가가 금액과 다르면 오류로 표시됩니다.',
+      '같은 견적 번호·품명은 한 번만 저장합니다. 수신자·담당자·연락처는 읽지 않습니다.'],
+  },
 };
 
 const ROW_STATES = [['all', '전체'], ['error', '오류'], ['save', '저장 예정'], ['update', '갱신'], ['skip', '건너뜀'], ['excluded', '제외']];
@@ -30,7 +48,7 @@ export async function render(main, ctx) {
 
   main.innerHTML = `
     <div class="page-head"><div><h2>${conf.title}</h2><div class="sub">${conf.sub}</div></div>
-      <div class="filters"><a class="btn" href="#/${conf.team}/uploads">업로드 이력</a></div></div>
+      <div class="filters">${conf.back ? `<a class="btn" href="${conf.back}">← ${conf.backLabel}</a>` : ''}<a class="btn" href="#/${conf.team}/uploads">업로드 이력</a></div></div>
     <div id="tu-body"></div>`;
   const body = main.querySelector('#tu-body');
 
@@ -67,6 +85,18 @@ export async function render(main, ctx) {
   }
 
   const valueOf = (r, key) => edits[r.id]?.values?.[key] ?? r.values[key] ?? '';
+  // 칸 입력: choices → 선택 목록, choices_by → 같은 행의 다른 칸 값에 따른 목록(예: 시·도 → 시·군), multiline → 여러 줄, suggestions → 추천 목록
+  function cellInput(c, r, v) {
+    const width = Math.min(260, Math.max(96, String(v).length * 8.5 + 30));
+    let choices = c.choices;
+    if (c.choices_by) choices = c.choices_map?.[valueOf(r, c.choices_by)] || [];
+    if (choices) {
+      if (c.choices_by && !choices.length) return '<span class="muted">없음</span>';
+      return `<select class="input" data-k="${c.key}" style="width:${Math.max(110, width)}px"><option value="">선택</option>${choices.map((x) => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('')}${v && !choices.includes(v) ? `<option selected>${esc(v)}</option>` : ''}</select>`;
+    }
+    if (c.multiline) return `<textarea class="input" data-k="${c.key}" rows="${Math.min(6, Math.max(2, String(v).split('\n').length))}" style="width:240px">${esc(v)}</textarea>`;
+    return `<input class="input" data-k="${c.key}" value="${esc(v)}" ${c.suggestions ? `list="dl-${c.key}"` : ''} style="width:${c.suggestions ? 260 : width}px">`;
+  }
   function drawReview() {
     const s = batch.summary;
     const rows = batch.rows.filter((r) => filter === 'all' || rowState(r) === filter);
@@ -93,20 +123,22 @@ export async function render(main, ctx) {
       <div class="card">
         <div class="seg" id="tu-filter" style="margin-bottom:12px">${ROW_STATES.map(([k, l]) => `<button type="button" data-f="${k}" class="${filter === k ? 'on' : ''}">${l} ${count(k)}</button>`).join('')}</div>
         ${!rows.length ? '<div class="empty">해당하는 행이 없습니다.</div>' : `
+        ${batch.columns.filter((c) => c.suggestions).map((c) => `<datalist id="dl-${c.key}">${c.suggestions.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>`).join('')}
         <div class="table-wrap" style="max-height:65vh"><table class="tbl edit review">
-          <thead><tr><th>행</th><th>상태</th>${done ? '' : '<th class="c">제외</th>'}${batch.columns.map((c) => `<th>${esc(c.label)}</th>`).join('')}</tr></thead>
+          <thead><tr><th>행</th><th>상태</th>${done ? '' : '<th class="c">제외</th>'}${batch.allow_duplicate_override && !done ? '<th class="c">중복 아님</th>' : ''}${batch.columns.map((c) => `<th>${esc(c.label)}</th>`).join('')}</tr></thead>
           <tbody>${rows.map((r) => {
             const st = rowState(r);
             return `<tr data-id="${r.id}" class="st-${st}">
               <td class="muted">${esc(r.sheet || '')} ${r.row_no ?? ''}</td>
               <td>${st === 'skip' ? skipChip(r) : STATE_CHIP[st]}</td>
               ${done ? '' : `<td class="c"><input type="checkbox" data-ex ${(edits[r.id]?.excluded ?? r.excluded) ? 'checked' : ''}></td>`}
+              ${batch.allow_duplicate_override && !done ? `<td class="c">${r.matches_existing || r.in_file_duplicate || r.allow_duplicate ? `<input type="checkbox" data-dup ${r.allow_duplicate ? 'checked' : ''} title="같은 곳에 실제로 두 번 간 경우">` : ''}</td>` : ''}
               ${batch.columns.map((c) => {
                 const err = r.errors?.[c.key];
                 const ch = r.changes?.[c.key];
                 const v = valueOf(r, c.key);
                 return `<td class="${err ? 'err' : ''} ${ch ? 'chg' : ''}">
-                  ${done || r.excluded ? `<span>${esc(v)}</span>` : `<input class="input" data-k="${c.key}" value="${esc(v)}" style="width:${Math.min(260, Math.max(96, String(v).length * 8.5 + 30))}px">`}
+                  ${done || r.excluded ? `<span class="pre">${esc(v)}</span>` : cellInput(c, r, v)}
                   ${err ? `<div class="cell-err">${esc(err)}</div>` : ''}
                   ${ch ? `<div class="cell-chg">이전: ${esc(ch.old || '(빈 값)')}</div>` : ''}</td>`;
               }).join('')}
@@ -127,10 +159,11 @@ export async function render(main, ctx) {
       btn.textContent = `고친 값 반영 · 다시 검사 (${Object.keys(edits).length})`;
     });
     table?.addEventListener('change', (e) => {
-      if (!('ex' in e.target.dataset)) return;
-      const id = Number(e.target.closest('tr').dataset.id);
-      (edits[id] ||= {}).excluded = e.target.checked;
-      recheck();
+      const id = Number(e.target.closest('tr')?.dataset.id);
+      if ('ex' in e.target.dataset) { (edits[id] ||= {}).excluded = e.target.checked; recheck(); return; }
+      if ('dup' in e.target.dataset) { (edits[id] ||= {}).allow_duplicate = e.target.checked; recheck(); return; }
+      // 선택 목록은 바로 반영 (시·도를 바꾸면 시·군 목록이 바뀌어야 하므로 다시 검사)
+      if (e.target.tagName === 'SELECT' && e.target.dataset.k) { ((edits[id] ||= {}).values ||= {})[e.target.dataset.k] = e.target.value; recheck(); }
     });
     body.querySelector('#tu-recheck')?.addEventListener('click', recheck);
     body.querySelector('#tu-cancel')?.addEventListener('click', async () => {

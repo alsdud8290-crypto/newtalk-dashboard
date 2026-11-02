@@ -533,3 +533,4 @@ textarea.input { height: auto; padding: 10px 12px; line-height: 1.5; resize: ver
 tr.changed { background: var(--warning-soft); }
 @media (max-width: 1100px) { .sv-top { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .form-grid.three { grid-template-columns: 1fr; } .prod-row { grid-template-columns: 1fr 80px; } }
+.review textarea.input { height: auto; padding: 6px 8px; line-height: 1.45; font-size: 12.5px; } .review .pre { white-space: pre-line; } .review select.input { height: 34px; }

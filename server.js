@@ -12,6 +12,7 @@ import * as pricing from './lib/pricing.js';
 import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
 import * as service from './lib/service.js';
+import './lib/pdf-uploads.js'; // 수주서·출장보고서·견적서 PDF 업로드 규칙 등록
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
