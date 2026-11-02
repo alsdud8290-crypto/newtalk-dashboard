@@ -651,7 +651,14 @@ app.use((err, _req, res, _next) => {
     ...(err.batch ? { batch: err.batch } : {}), ...(err.fields ? { fields: err.fields } : {}), ...(err.existing ? { existing: err.existing } : {}) });
 });
 
-await pricing.seedVirtualPricing();
-await production.seedVirtualProduction();
-await service.seedVirtualService();
 app.listen(PORT, () => console.log(`뉴토크 코리아 경영 대시보드: http://localhost:${PORT}`));
+// 처음 실행(표가 비어 있을 때)만 가상 데이터를 넣는다. 원격 DB(Turso)에서는 시간이 걸리므로 서버를 먼저 켜고 뒤에서 넣는다
+(async () => {
+  try {
+    await pricing.seedVirtualPricing();
+    await production.seedVirtualProduction();
+    await service.seedVirtualService();
+  } catch (e) {
+    console.error('[seed] 가상 데이터 넣기 실패', e);
+  }
+})();
