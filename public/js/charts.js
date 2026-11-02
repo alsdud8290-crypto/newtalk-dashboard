@@ -75,7 +75,9 @@ const tooltipWon = {
 };
 
 // 도넛 + 직접 라벨 범례 (색 + 이름 + 금액 + 비율)
-export function donut(canvas, legendEl, items, colorOf) {
+// opts.fmt: 값 표시 (기본 원 단위), opts.onSelect(label): 조각·범례를 누를 때
+export function donut(canvas, legendEl, items, colorOf, opts = {}) {
+  const fmt = opts.fmt || won;
   const total = items.reduce((a, b) => a + b.value, 0);
   const shown = items.filter((x) => x.value > 0);
   const chart = new Chart(canvas, {
@@ -91,20 +93,23 @@ export function donut(canvas, legendEl, items, colorOf) {
     options: {
       cutout: '62%',
       plugins: {
-        tooltip: { callbacks: { title: () => '', label: (c) => `${c.label}: ${won(c.parsed)} (${pct(c.parsed / total)})` } },
+        tooltip: { callbacks: { title: () => '', label: (c) => `${c.label}: ${fmt(c.parsed)} (${pct(c.parsed / total)})` } },
       },
+      onClick: (_, els) => { if (els.length && opts.onSelect) opts.onSelect(shown[els[0].index].label); },
+      onHover: (e, els) => { e.native.target.style.cursor = els.length && opts.onSelect ? 'pointer' : 'default'; },
     },
   });
   if (legendEl) {
     legendEl.innerHTML = items.length
       ? items.map((x) => `
-        <div class="row ${x.value > 0 ? '' : 'zero'}">
+        <div class="row ${x.value > 0 ? '' : 'zero'} ${opts.onSelect ? 'click' : ''}" data-label="${esc(x.label)}">
           <span class="sw" style="background:${colorOf(x.label)}"></span>
           <span class="lab">${esc(x.label)}</span>
-          <span class="val">${won(x.value)}</span>
+          <span class="val">${fmt(x.value)}</span>
           <span class="pct">${total ? pct(x.value / total, 1) : '-'}</span>
         </div>`).join('')
       : '';
+    if (opts.onSelect) legendEl.onclick = (e) => { const r = e.target.closest('[data-label]'); if (r) opts.onSelect(r.dataset.label); };
   }
   return chart;
 }
@@ -112,6 +117,7 @@ export function donut(canvas, legendEl, items, colorOf) {
 // 목표 달성 게이지 (달성 / 남은 목표)
 // opts: 강조 카드(오렌지 배경)에서는 흰 고리 { color, rest, gap }
 export function gauge(canvas, achieved, target, opts = {}) {
+  const fmt = opts.fmt || won;
   const done = Math.min(achieved, target || achieved);
   const color = opts.color || SERIES[0];
   const rest = opts.rest || REMAIN;
@@ -131,8 +137,8 @@ export function gauge(canvas, achieved, target, opts = {}) {
         title: () => '',
         // 고리는 100%까지만 채우지만, 툴팁은 실제 실적·남은 금액을 보여준다
         label: (c) => (c.dataIndex === 0
-          ? `실적: ${won(achieved)} (${pct(achieved / target, 1)})`
-          : `남은 목표: ${won(Math.max(0, target - achieved))}`),
+          ? `실적: ${fmt(achieved)} (${pct(achieved / target, 1)})`
+          : `남은 목표: ${fmt(Math.max(0, target - achieved))}`),
       } } },
     },
   });
@@ -262,6 +268,57 @@ export function diffBar(canvas, items, { selected = null, onSelect } = {}) {
             label: (c) => {
               const i = items[c.dataIndex];
               return `기준값 대비 ${signed(i.rate)}${i.detail ? ` · ${i.detail}` : ''}`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+// 생산량 막대 (월별·분기별): 생산량 막대 + 목표 점선 + (선택) 전년 같은 달·분기(점선 테두리 막대) + (선택) 수주량 선
+// bars: [{ value, label, actual, orders, lastYear, selected, inProgress }] — 선택한 기간은 진하게, 누르면 onSelect(value)
+export const ORDER_LINE = SERIES[1];
+export function prodBars(canvas, bars, { target, targetName = '목표', unitName = '달', showOrders, showLastYear, onSelect } = {}) {
+  const color = SERIES[0];
+  const anySelected = bars.some((b) => b.selected);
+  const datasets = [];
+  if (showLastYear) {
+    datasets.push({ type: 'bar', label: `전년 같은 ${unitName}`, data: bars.map((b) => b.lastYear ?? 0), backgroundColor: 'rgba(0,0,0,0)',
+      borderColor: INK.muted, borderWidth: 1.5, borderDash: [4, 3], borderRadius: 4, borderSkipped: false, maxBarThickness: 22, order: 2 });
+  }
+  datasets.push({ type: 'bar', label: '생산량', data: bars.map((b) => b.actual),
+    backgroundColor: bars.map((b) => (!anySelected || b.selected ? color : `${color}59`)), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, order: 1 });
+  if (showOrders) {
+    datasets.push({ type: 'line', label: '수주량', data: bars.map((b) => b.orders), borderColor: ORDER_LINE, backgroundColor: ORDER_LINE,
+      borderWidth: 2, pointRadius: 2.5, pointHoverRadius: 4, tension: 0.25, order: 0 });
+  }
+  if (target !== null && target !== undefined) {
+    datasets.push({ type: 'line', label: targetName, data: bars.map(() => target), borderColor: INK.primary, borderWidth: 1.5,
+      borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 0, fill: false, order: -1 });
+  }
+  const unit = (v) => `${Number(v).toLocaleString('ko-KR')}대`;
+  return new Chart(canvas, {
+    data: { labels: bars.map((b) => (b.inProgress ? [b.label, '진행 중'] : b.label)), datasets },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      onClick: (_, els) => { if (els.length && onSelect) onSelect(bars[els[0].index].value); },
+      onHover: (e, els) => { e.native.target.style.cursor = els.length && onSelect ? 'pointer' : 'default'; },
+      scales: {
+        x: { grid: { display: false }, border: { color: INK.grid }, ticks: { color: (c) => (bars[c.index]?.inProgress ? SERIES[1] : INK.secondary) } },
+        y: { beginAtZero: true, grid: { color: INK.grid }, border: { display: false }, ticks: { precision: 0 } },
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            title: (items) => bars[items[0].dataIndex].label,
+            label: (c) => `${c.dataset.label}: ${unit(c.parsed.y)}`,
+            footer: (items) => {
+              const b = bars[items[0].dataIndex];
+              const out = [];
+              if (target) out.push(`${targetName} 대비 ${b.actual - target >= 0 ? '+' : ''}${Math.round((b.actual - target) * 10) / 10}대 (${Math.round(b.actual / target * 1000) / 10}%)`);
+              if (b.inProgress) out.push('아직 끝나지 않아 낮게 보일 수 있음');
+              return out;
             },
           },
         },

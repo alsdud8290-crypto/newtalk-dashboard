@@ -10,6 +10,10 @@ import * as placeholder from './pages/placeholder.js';
 import * as partPrices from './pages/part-prices.js';
 import * as partPriceInput from './pages/part-price-input.js';
 import * as pricing from './pages/pricing.js';
+import * as production from './pages/production.js';
+import { records as prodRecords, orders as prodOrders, serials as prodSerials } from './pages/production-lists.js';
+import * as prodCalendar from './pages/production-calendar.js';
+import * as teamUpload from './pages/team-upload.js';
 
 const root = document.getElementById('root');
 const state = { user: null, meta: null, cleanup: null };
@@ -26,7 +30,13 @@ const ROUTES = {
   '/input/receivables': { page: receivables, perm: 'mgmt', title: '미수금 관리' },
   '/upload': { page: upload, perm: 'mgmt', edit: 'mgmt', title: '엑셀 업로드' },
   '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
-  '/production': { page: placeholder, perm: 'production', title: '생산팀', team: 'production' },
+  '/production': { page: production, perm: 'production', title: '생산팀 대시보드' },
+  '/production/records': { page: prodRecords, perm: 'production', title: '제조내역' },
+  '/production/orders': { page: prodOrders, perm: 'production', title: '수주 내역' },
+  '/production/serials': { page: prodSerials, perm: 'production', title: '일련번호 조회' },
+  '/production/calendar': { page: prodCalendar, perm: 'production', title: '납기 캘린더' },
+  '/production/upload': { page: teamUpload, perm: 'production', edit: 'production', title: '제조내역 업로드', kind: 'manufacturing_excel' },
+  '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
   '/service': { page: placeholder, perm: 'service', title: '서비스팀', team: 'service' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
@@ -55,7 +65,15 @@ const MENU = [
     ['/upload', '엑셀 업로드·데이터 이관'],
     ['/export', '데이터 내보내기'],
   ] },
-  { type: 'item', href: '/production', label: '생산', icon: 'production', perm: 'production', soon: true },
+  { type: 'group', label: '생산', icon: 'production', perm: 'production', items: [
+    ['/production', '생산 대시보드'],
+    ['/production/records', '제조내역'],
+    ['/production/orders', '수주 내역'],
+    ['/production/serials', '일련번호 조회'],
+    ['/production/calendar', '납기 캘린더'],
+    ['/production/upload', '제조내역 업로드'],
+    ['/production/uploads', '업로드 이력'],
+  ] },
   { type: 'item', href: '/service', label: '서비스', icon: 'service', perm: 'service', soon: true },
   // 하위 항목 세 번째 값: 그 항목만의 권한 (없으면 묶음 권한)
   { type: 'group', label: '단가', icon: 'price', perm: PART_PERMS, items: [
@@ -194,7 +212,7 @@ async function route() {
   }
   main.innerHTML = '<div class="empty">불러오는 중…</div>';
   try {
-    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, canEdit, reloadMeta });
+    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, kind: r.kind, canEdit, reloadMeta });
   } catch (err) {
     main.innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
   }

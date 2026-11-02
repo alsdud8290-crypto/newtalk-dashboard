@@ -9,6 +9,8 @@ import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from '
 import { generateComment } from './lib/ai.js';
 import * as ledger from './lib/ledger.js';
 import * as pricing from './lib/pricing.js';
+import * as production from './lib/production.js';
+import * as uploads from './lib/uploads.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -586,13 +588,52 @@ parts.post('/prices', wrap(async (req, res) => res.status(201).json(await pricin
 parts.delete('/prices/:id', wrap(async (req, res) => { await pricing.deletePartPrice(req.params.id); res.json({ ok: true }); }));
 app.use('/api/parts', parts);
 
+// ---------- 생산팀 (ITB2026에서 옮겨 옴) ----------
+// 조회는 생산팀 열람 권한, 연간 목표 입력은 생산팀 수정 권한(팀장·경영지원팀·대표·관리자)
+const prod = express.Router();
+prod.use(requirePerm('production'));
+prod.use(requireEditFor('production'));
+const yearParam = (v) => intParam(v, 2000, 2100, '연도');
+prod.get('/targets/:year', wrap(async (req, res) => res.json(await production.getTarget(yearParam(req.params.year)))));
+prod.put('/targets/:year', wrap(async (req, res) => res.json(await production.setTarget(yearParam(req.params.year), req.body || {}))));
+prod.get('/dashboard', wrap(async (req, res) => res.json(await production.dashboard(req.query))));
+prod.get('/sales', wrap(async (req, res) => res.json(await production.salesSummary(req.query))));
+prod.get('/serials', wrap(async (req, res) => res.json(await production.searchSerials(req.query.q))));
+prod.get('/serials/:serial', wrap(async (req, res) => res.json(await production.serialDetail(req.params.serial))));
+prod.get('/due-calendar', wrap(async (req, res) => res.json(await production.dueCalendar(req.query))));
+prod.get('/due-calendar/search', wrap(async (req, res) => res.json(await production.searchDue(req.query.q))));
+prod.get('/due-soon', wrap(async (_req, res) => res.json(await production.dueSoon())));
+prod.get('/records', wrap(async (req, res) => res.json(await production.recordList(req.query))));
+prod.get('/records/export', wrap(async (req, res) => {
+  const { label, rows } = await production.recordExportRows(req.query);
+  xlsxSend(res, `제조내역_${label}.xlsx`, await pricing.simpleWorkbook([['제조내역', production.RECORD_COLUMNS, rows]]));
+}));
+prod.get('/orders', wrap(async (req, res) => res.json(await production.orderList(req.query))));
+prod.get('/orders/export', wrap(async (req, res) => {
+  const { label, rows } = await production.orderExportRows(req.query);
+  xlsxSend(res, `수주내역_${label}.xlsx`, await pricing.simpleWorkbook([['수주내역', production.ORDER_COLUMNS.map(([h, k, w]) => [h, k, w, k === 'item.quantity' ? 'won' : undefined]), rows]]));
+}));
+prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await production.earliestYear() })));
+app.use('/api/production', prod);
+
+// 팀 업로드 (추출 → 확인·수정 → 저장). 권한은 파일 종류를 맡은 팀의 수정 권한으로 lib/uploads.js에서 확인
+const up = express.Router();
+up.use(requireLogin);
+up.get('/', wrap(async (req, res) => res.json(await uploads.history(String(req.query.team || ''), req.user))));
+up.post('/', wrap(async (req, res) => res.status(201).json(await uploads.createBatch(req.body || {}, req.user))));
+up.patch('/:id', wrap(async (req, res) => res.json(await uploads.patchBatch(req.params.id, req.body || {}, req.user))));
+up.post('/:id/confirm', wrap(async (req, res) => res.json(await uploads.confirmBatch(req.params.id, req.user))));
+up.post('/:id/cancel', wrap(async (req, res) => res.json(await uploads.cancelBatch(req.params.id, req.user))));
+app.use('/api/uploads', up);
+
 // ---------- 에러 처리 ----------
 app.use('/api', (_req, _res, next) => next(new HttpError(404, '없는 API입니다.')));
 app.use((err, _req, res, _next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 ? '서버 오류가 발생했습니다.' : err.message });
+  res.status(status).json({ error: status >= 500 ? '서버 오류가 발생했습니다.' : err.message, ...(err.batch ? { batch: err.batch } : {}) });
 });
 
 await pricing.seedVirtualPricing();
+await production.seedVirtualProduction();
 app.listen(PORT, () => console.log(`뉴토크 코리아 경영 대시보드: http://localhost:${PORT}`));
