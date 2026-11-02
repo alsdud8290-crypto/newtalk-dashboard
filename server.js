@@ -401,6 +401,7 @@ mgmt.post('/company/import', wrap(async (req, res) => {
 //   kind=receivables: 이번 달 회사 양식(미수금 현황) + 미수금 상세 (open=1 미수 건만, q 검색)
 //   kind=sales     : 매출내역 (year, q)
 //   kind=targets   : 연간목표
+//   kind=template  : 업로드 양식 (위 파일들과 같은 서식, 빈 시트)
 mgmt.get('/xlsx', wrap(async (req, res) => {
   const kind = String(req.query.kind || 'full');
   const sc = exportScope(req.query);
@@ -445,6 +446,11 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   } else if (kind === 'sales') {
     spec = { guide, scope: sc, data: { sales: await sales() } };
     label = `매출내역_${scopeName}`;
+  } else if (kind === 'template') {
+    const y = now.getFullYear();
+    spec = { guide: true, template: true, months: [thisMonth],
+      data: { targets: [{ year: y }], monthly: Array.from({ length: 12 }, (_, i) => ({ year: y, month: i + 1 })), sales: [], receivables: [] } };
+    label = `업로드양식_${y}`;
   } else if (kind === 'targets') {
     spec = { data: { targets: await src.targets() } };
     label = '연간목표';
@@ -520,37 +526,6 @@ admin.post('/users/:id/reset-password', wrap(async (req, res) => {
   if (!r.changes) throw new HttpError(404, '사용자를 찾을 수 없습니다.');
   await db.run('DELETE FROM sessions WHERE user_id = ?', id);
   res.json({ ok: true });
-}));
-
-// 화면 확인용 샘플 직원 (이름에 '(샘플)'). 이미 있는 아이디는 건너뜀
-// [아이디, 이름, 부서, 직책, 기본값에서 바꿀 권한, 사용 여부]
-const SAMPLE_STAFF = [
-  ['s.ceo', '박성훈(샘플)', '대표', '팀장'],
-  ['s.mgmt1', '김지현(샘플)', '경영지원팀', '팀장'],
-  ['s.mgmt2', '이수민(샘플)', '경영지원팀', '팀원', { admin: 0 }],
-  ['s.mgmt3', '정다은(샘플)', '경영지원팀', '팀원', { admin: 0 }],
-  ['s.dual1', '최민호(샘플)', '생산·서비스 겸직', '팀장'],
-  ['s.dual2', '강태윤(샘플)', '생산·서비스 겸직', '팀원'],
-  ['s.dual3', '윤서진(샘플)', '생산·서비스 겸직', '팀원'],
-  ['s.dual4', '한동욱(샘플)', '생산·서비스 겸직', '팀원'],
-  ['s.dual5', '조은비(샘플)', '생산·서비스 겸직', '팀원'],
-  ['s.prod1', '오재현(샘플)', '생산팀', '팀장'],
-  ['s.prod2', '서현우(샘플)', '생산팀', '팀원', { mgmt: 1 }],
-  ['s.svc1', '임채원(샘플)', '서비스팀', '팀장'],
-  ['s.svc2', '송유진(샘플)', '서비스팀', '팀원', null, false],
-];
-const SAMPLE_PASSWORD = 'sample1234!';
-app.post('/api/admin/sample-users', requirePerm('admin'), wrap(async (_req, res) => {
-  let added = 0;
-  for (const [username, name, dept, role, extra, active = true] of SAMPLE_STAFF) {
-    if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) continue;
-    const p = normalizePerms({ ...defaultPerms(dept, role), ...(extra || {}) });
-    await db.run(`INSERT INTO users (username, name, dept, role, password_hash, ${PERMS.map((k) => `perm_${k}`).join(', ')}, active, must_change_pw)
-                  VALUES (?, ?, ?, ?, ?, ${PERMS.map(() => '?').join(', ')}, ?, 1)`,
-    username, name, dept, role, hashPassword(SAMPLE_PASSWORD), ...PERMS.map((k) => p[k]), active ? 1 : 0);
-    added += 1;
-  }
-  res.json({ added, total: SAMPLE_STAFF.length, password: SAMPLE_PASSWORD });
 }));
 
 // 부서·직책별 기본 권한 { 부서: { 팀원: {...}, 팀장: {...} } }

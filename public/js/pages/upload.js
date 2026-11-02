@@ -132,6 +132,8 @@ function parseSheet(name, ws) {
       r.month = String(r.month).replace(/월/, '').trim();
       if (!/^\d{1,2}$/.test(r.month)) continue; // 합계 행 등은 건너뜀
       if (!r.year) r.year = document.getElementById('u-year').value;
+      // 값을 하나도 채우지 않은 달(업로드 양식 그대로)은 건너뜀 — 0으로 덮어쓰지 않게
+      if (Object.keys(colIdx).filter((k) => !['year', 'month'].includes(k)).every((k) => String(r[k] ?? '').trim() === '')) continue;
     }
     if (type === 'sales') {
       const label = String(r.customer || '').trim();
@@ -147,42 +149,10 @@ function parseSheet(name, ws) {
       r.collected_date = toDate(r.collected_date);
       r.due_date = toDate(r.due_date);
     }
-    if (type === 'targets' && !String(r.year).trim()) continue;
+    if (type === 'targets' && (!String(r.year).trim() || String(r.revenue ?? '').trim() === '')) continue;
     rows.push(r);
   }
   return { name, type, rows, warnings: [...warnings].map(([w, n]) => (n > 1 ? `${w} (${n}건)` : w)), cols: Object.keys(colIdx) };
-}
-
-function downloadTemplate() {
-  const y = new Date().getFullYear();
-  const wb = XLSX.utils.book_new();
-  const add = (name, aoa, widths) => {
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = widths.map((w) => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, ws, name);
-  };
-  add('연간목표', [['연도', '목표매출액'], [y, 5000000000]], [8, 16]);
-  add('월별실적', [
-    ['연도', '월', '제품매출액', '상품매출액', '용역매출액', '상품매입액', '원재료매입액', '경비지출액', '광고선전비', '접대비', '그외지출액'],
-    ...Array.from({ length: 12 }, (_, i) => [y, i + 1, '', '', '', '', '', '', '', '', '']),
-  ], [8, 5, 14, 14, 14, 14, 14, 14, 12, 12, 12]);
-  add('매출내역', [
-    ['일자', '판매처', '산업분야', '제품시리즈', '매출구분', '금액', '비고'],
-    [`${y}-01-15`, '(예시) ○○건설', '상하수도', '(예시) A 시리즈', '제품', 12000000, '예시 행은 지우고 입력'],
-  ], [12, 22, 12, 16, 10, 14, 24]);
-  add('미수금', [
-    ['거래처', '청구일자', '청구액', '수금액', '수금일자', '결제예정일', '비고'],
-    ['(예시) ○○건설', `${y}-01-31`, 13200000, 0, '', `${y}-03-31`, '예시 행은 지우고 입력'],
-  ], [22, 12, 14, 14, 12, 12, 24]);
-  add('작성안내', [
-    ['시트', '설명'],
-    ['연간목표', '연도별 목표매출액(원). 여러 해를 한 번에 입력 가능'],
-    ['월별실적', '월별 매출·매입·경비(원). 같은 연도·월이 이미 있으면 덮어씀'],
-    ['매출내역', '판매처별 매출 건. 산업분야: 상하수도/발전소/가스/오일/석유/민간 플랜트/기타. 매출구분: 제품/상품/용역'],
-    ['미수금', '청구(세금계산서) 건별 청구액·수금액. 잔액 = 청구액 − 수금액'],
-    ['공통', '열 이름이 조금 달라도(예: 거래처/업체명, 공급가액/금액) 자동 인식합니다. 시트 이름이나 열 순서는 자유롭습니다.'],
-  ], [12, 90]);
-  XLSX.writeFile(wb, `뉴토크코리아_경영지원_업로드양식_${y}.xlsx`);
 }
 
 export async function render(main, ctx) {
@@ -220,7 +190,8 @@ export async function render(main, ctx) {
     </div>
     <div id="u-preview"></div>`;
 
-  main.querySelector('#u-tpl').addEventListener('click', downloadTemplate);
+  // 업로드 양식 = 내려받기 파일과 같은 회사 양식 서식의 빈 파일
+  main.querySelector('#u-tpl').addEventListener('click', () => downloadCompany({ kind: 'template' }));
   main.querySelector('#u-full').addEventListener('click', () => downloadCompany({ kind: 'full' }));
   const drop = main.querySelector('#u-drop');
   const input = main.querySelector('#u-file');

@@ -51,7 +51,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div class="ttl"><h3>파트넘버별 기준값 · 출장지 단가</h3><span class="hint" id="pp-count"></span></div>
-        <button class="btn sm" id="pp-xlsx">⬇ 엑셀</button><button class="btn sm" id="pp-csv">⬇ CSV</button>
+        <div class="filters"><button class="btn sm" id="pp-xlsx">⬇ 엑셀</button><button class="btn sm" id="pp-csv">⬇ CSV</button></div>
       </div>
       <div class="filters" style="margin-bottom:12px">
         <form id="pp-search" class="filters"><input class="input" name="q" placeholder="파트넘버(예: 05-A-01, 0501) 또는 품명" style="width:280px"><button class="btn">검색</button></form>

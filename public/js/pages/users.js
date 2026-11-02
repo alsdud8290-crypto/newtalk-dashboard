@@ -12,7 +12,6 @@ export async function render(main, ctx) {
     <div class="page-head">
       <div><h2>사용자·권한 관리</h2><div class="sub">부서·직책을 고르면 기본 권한이 채워지며, 사람마다 팀별 열람·수정 권한을 켜고 끌 수 있습니다.</div></div>
       <div class="filters">
-        <button class="btn" id="u-sample" title="화면 확인용 샘플 직원 13명을 추가합니다">샘플 직원 추가</button>
         <button class="btn primary" id="u-add">+ 사용자 등록</button>
       </div>
     </div>
@@ -155,11 +154,6 @@ export async function render(main, ctx) {
     else resetPw(u);
   });
   main.querySelector('#u-add').addEventListener('click', addUser);
-  main.querySelector('#u-sample').addEventListener('click', async () => {
-    const r = await api('/api/admin/sample-users', { method: 'POST' });
-    toast(r.added ? `샘플 직원 ${r.added}명을 추가했습니다. (초기 비밀번호 ${r.password})` : '샘플 직원이 이미 모두 등록되어 있습니다.');
-    await load();
-  });
 
   await load();
 }
