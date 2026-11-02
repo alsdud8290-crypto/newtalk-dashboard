@@ -1,5 +1,5 @@
 import { api, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions } from '../core.js';
-import { datasetSheet, downloadCsv, downloadCompany, stamp } from '../exporter.js';
+import { datasetSheet, downloadCsv, downloadCompany, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 export const FIELDS = [
   ['product_sales', '제품 매출액', 'sales'],
@@ -35,8 +35,7 @@ export async function render(main, ctx) {
       <div class="card-head">
         <h3 id="m-title"></h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn sm" id="m-xlsx">⬇ 엑셀</button>
-          <button class="btn sm" id="m-csv">⬇ CSV</button>
+          ${periodDownloadButton('m-dl')}
           <button class="btn sm" id="m-fill">매출 내역 합계로 매출 채우기</button>
           <button class="btn sm primary" id="m-save">월별 실적 저장</button>
         </div>
@@ -122,17 +121,19 @@ export async function render(main, ctx) {
     toast('매출 내역 합계를 채웠습니다. 확인 후 저장해 주세요.');
   });
 
-  // 화면의 표 값 그대로 내려받기 (엑셀에는 연간 목표 시트도 포함)
-  const tableRows = () => [...table.querySelectorAll('tbody tr')].map((tr) => ({
-    year, month: Number(tr.dataset.month),
-    ...Object.fromEntries(FIELDS.map(([f]) => [f, parseMoney(tr.querySelector(`[name=${f}]`).value)])),
-  }));
-  // 엑셀: 회사 양식(경영지원 관리) — 달마다 시트 + 연간목표·월별실적 상세 (저장된 값 기준)
-  main.querySelector('#m-xlsx').addEventListener('click', () => {
-    if (dirty) toast('저장하지 않은 변경 사항은 엑셀에 들어가지 않습니다. 먼저 저장해 주세요.', true);
-    downloadCompany({ kind: 'monthly', year });
+  // 내려받기: 기간(월·분기·연간·전체)을 골라 저장된 값 기준으로. 엑셀은 회사 양식(경영지원 관리) — 달마다 시트 + 연간목표·월별실적
+  bindPeriodDownload(main, 'm-dl', {
+    years: ctx.meta.years, year, mode: 'year', currentYear: () => year,
+    onExcel: (p) => {
+      if (dirty) toast('저장하지 않은 변경 사항은 들어가지 않습니다. 먼저 저장해 주세요.', true);
+      return downloadCompany({ kind: 'monthly', period: p });
+    },
+    onCsv: async (p, label) => {
+      if (dirty) toast('저장하지 않은 변경 사항은 들어가지 않습니다. 먼저 저장해 주세요.', true);
+      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
+      downloadCsv(`뉴토크코리아_월별실적_${label}_${stamp()}`, datasetSheet('monthly', d.monthly));
+    },
   });
-  main.querySelector('#m-csv').addEventListener('click', () => downloadCsv(`뉴토크코리아_월별실적_${year}년_${stamp()}`, datasetSheet('monthly', tableRows())));
 
   main.querySelector('#m-save').addEventListener('click', async () => {
     const rows = [...table.querySelectorAll('tbody tr')].map((tr) => ({

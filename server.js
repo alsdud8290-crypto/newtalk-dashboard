@@ -391,16 +391,30 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   const receivables = async () => (await db.all(`SELECT * FROM receivables ${req.query.open === '1' ? 'WHERE amount - collected > 0.5' : ''} ORDER BY invoice_date, id`))
     .filter(like(['customer']));
   const scopeName = sc ? sc.label.replace(/\s/g, '') : '전체';
+  // 검색어 없이 받은 파일에는 '안내' 시트(기간 표시)를 넣어, 다시 올리면 그 기간만 교체되게 한다
+  const guide = !q;
   let spec;
   let label;
   if (kind === 'monthly') {
-    spec = { months: await ledger.monthsWithData(sc), data: { targets: await src.targets(), monthly: await src.monthly() } };
+    spec = { guide, scope: sc, months: await ledger.monthsWithData(sc), data: { targets: await src.targets(), monthly: await src.monthly() } };
     label = `월별실적_${scopeName}`;
   } else if (kind === 'receivables') {
-    spec = { months: [thisMonth], data: { receivables: await receivables() } };
-    label = `미수금_${thisMonth}`;
+    if (sc) {
+      // 기간: 달마다 월말 기준 미수금 현황 + 그 기간에 청구된 건(미수·수금 완료 모두)
+      const months = [];
+      for (let m = sc.from; m <= sc.to && m <= thisMonth;) {
+        months.push(m);
+        const [yy, mm] = m.split('-').map(Number);
+        m = mm === 12 ? `${yy + 1}-01` : `${yy}-${p2(mm + 1)}`;
+      }
+      spec = { guide, scope: sc, months, data: { receivables: (await src.receivables()).filter(like(['customer'])) } };
+      label = `미수금_${scopeName}`;
+    } else {
+      spec = { guide: guide && req.query.open !== '1', months: [thisMonth], data: { receivables: await receivables() } };
+      label = `미수금_${thisMonth}`;
+    }
   } else if (kind === 'sales') {
-    spec = { data: { sales: await sales() } };
+    spec = { guide, scope: sc, data: { sales: await sales() } };
     label = `매출내역_${scopeName}`;
   } else if (kind === 'targets') {
     spec = { data: { targets: await src.targets() } };

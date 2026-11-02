@@ -143,3 +143,74 @@ export async function downloadCompany(params = {}) {
   saveBlob(decodeURIComponent((cd.match(/filename\*=UTF-8''([^;]+)/) || [])[1] || 'export.xlsx'), await res.blob());
 }
 export const downloadFull = (year) => downloadCompany({ kind: 'full', year });
+
+// ---------- 기간 고르기 (전체·연간·분기·월) ----------
+// 서버 period 형식: '' 전체 · '2026' 연간 · '2026-Q3' 분기 · '2026-09' 월
+const PERIOD_MODES = [['', '전체'], ['year', '연간'], ['quarter', '분기'], ['month', '월']];
+export function periodPickerHtml({ years = [], year, mode = '' } = {}) {
+  const now = new Date();
+  const y0 = year || now.getFullYear();
+  const ys = [...new Set([...years, y0, now.getFullYear()])].sort((a, b) => b - a);
+  return `<div class="pp" data-mode="${mode}">
+    <div class="seg">${PERIOD_MODES.map(([v, l]) => `<button type="button" data-m="${v}" class="${v === mode ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <select class="input" data-pp="y" ${mode ? '' : 'hidden'}>${ys.map((v) => `<option value="${v}" ${v === y0 ? 'selected' : ''}>${v}년</option>`).join('')}</select>
+    <select class="input" data-pp="q" ${mode === 'quarter' ? '' : 'hidden'}>${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === Math.ceil((now.getMonth() + 1) / 3) ? 'selected' : ''}>${q}분기 (${q * 3 - 2}~${q * 3}월)</option>`).join('')}</select>
+    <select class="input" data-pp="m" ${mode === 'month' ? '' : 'hidden'}>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i === now.getMonth() ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>
+  </div>`;
+}
+// el: .pp 요소 → { period(), label() }. 바뀔 때 onChange 호출
+export function bindPeriodPicker(el, onChange = () => {}) {
+  const sel = (k) => el.querySelector(`[data-pp="${k}"]`);
+  let mode = el.dataset.mode || '';
+  el.querySelector('.seg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]');
+    if (!b) return;
+    mode = b.dataset.m;
+    el.querySelectorAll('[data-m]').forEach((x) => x.classList.toggle('on', x === b));
+    sel('y').hidden = !mode;
+    sel('q').hidden = mode !== 'quarter';
+    sel('m').hidden = mode !== 'month';
+    onChange();
+  });
+  el.querySelectorAll('select').forEach((s) => s.addEventListener('change', onChange));
+  const y = () => sel('y').value;
+  return {
+    period: () => (!mode ? '' : mode === 'year' ? y() : mode === 'quarter' ? `${y()}-Q${sel('q').value}` : `${y()}-${sel('m').value.padStart(2, '0')}`),
+    label: () => (!mode ? '전체' : mode === 'year' ? `${y()}년` : mode === 'quarter' ? `${y()}년${sel('q').value}분기` : `${y()}년${sel('m').value}월`),
+  };
+}
+
+// 페이지 머리의 [⬇ 내려받기] → 기간 고르고 엑셀/CSV
+//   opts: { years, year, mode, hint, currentYear(), onExcel(period, label), onCsv(period, label) }
+export const periodDownloadButton = (id) => `<span class="dl-menu pd" id="${id}"><button type="button" class="btn" data-pd-open aria-haspopup="true">⬇ 내려받기</button></span>`;
+export function bindPeriodDownload(root, id, opts) {
+  const wrap = root.querySelector(`#${id}`);
+  const pop = document.createElement('div');
+  pop.className = 'pd-pop';
+  pop.hidden = true;
+  pop.innerHTML = `<div class="pd-title">기간을 골라 내려받기</div>
+    ${periodPickerHtml(opts)}
+    ${opts.hint ? `<div class="pd-hint">${opts.hint}</div>` : ''}
+    <div class="pd-actions"><button type="button" class="btn brand" data-pd="xlsx">⬇ 엑셀</button><button type="button" class="btn" data-pd="csv">⬇ CSV</button></div>`;
+  wrap.appendChild(pop);
+  const picker = bindPeriodPicker(pop.querySelector('.pp'));
+  const close = (e) => { if (!wrap.contains(e.target)) { pop.hidden = true; document.removeEventListener('click', close); } };
+  wrap.querySelector('[data-pd-open]').addEventListener('click', () => {
+    // 화면에서 고른 연도를 기본값으로
+    const ySel = pop.querySelector('[data-pp="y"]');
+    const cy = opts.currentYear?.();
+    if (pop.hidden && cy && ySel.value !== String(cy)) {
+      if (![...ySel.options].some((o) => o.value === String(cy))) ySel.add(new Option(`${cy}년`, cy));
+      ySel.value = String(cy);
+    }
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) setTimeout(() => document.addEventListener('click', close));
+  });
+  pop.querySelector('.pd-actions').addEventListener('click', async (e) => {
+    const f = e.target.dataset.pd;
+    if (!f) return;
+    e.target.disabled = true;
+    try { await (f === 'xlsx' ? opts.onExcel : opts.onCsv)(picker.period(), picker.label()); } catch (err) { toast(err.message, true); }
+    e.target.disabled = false;
+  });
+}

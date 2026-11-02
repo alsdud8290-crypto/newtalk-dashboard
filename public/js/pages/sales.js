@@ -1,5 +1,5 @@
 import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today } from '../core.js';
-import { datasetSheet, downloadCsv, downloadCompany, exportButtons, fileSafe, stamp } from '../exporter.js';
+import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 export async function render(main, ctx) {
   let year = period.year;
@@ -12,7 +12,7 @@ export async function render(main, ctx) {
       <div class="filters">
         <select class="input" id="s-year">${yearOptions(year, ctx.meta.years)}</select>
         <input class="input" id="s-filter" placeholder="판매처·시리즈 검색" style="width:180px">
-        ${exportButtons('s')}
+        ${periodDownloadButton('s-dl')}
         <button class="btn primary" id="s-add">+ 매출 등록</button>
       </div>
     </div>
@@ -73,11 +73,17 @@ export async function render(main, ctx) {
   main.querySelector('#s-year').addEventListener('change', (e) => { year = Number(e.target.value); setPeriod({ year }); load(); });
   main.querySelector('#s-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
   main.querySelector('#s-add').addEventListener('click', () => edit(null));
-  // 화면에 보이는 목록(연도·검색 반영)을 그대로 내려받기
-  const shown = () => (filter ? rows.filter((r) => `${r.customer} ${r.series} ${r.note}`.toLowerCase().includes(filter.toLowerCase())) : rows);
-  const exportName = () => fileSafe(`뉴토크코리아_매출내역_${year}년${filter ? `_${filter}` : ''}_${stamp()}`);
-  main.querySelector('#s-xlsx').addEventListener('click', () => downloadCompany({ kind: 'sales', year, q: filter }));
-  main.querySelector('#s-csv').addEventListener('click', () => downloadCsv(exportName(), datasetSheet('sales', [...shown()].reverse())));
+  // 내려받기: 기간(월·분기·연간·전체)을 골라서, 검색어가 있으면 검색 결과만
+  const match = (r) => !filter || `${r.customer} ${r.series} ${r.note}`.toLowerCase().includes(filter.toLowerCase());
+  bindPeriodDownload(main, 's-dl', {
+    years: ctx.meta.years, year, mode: 'year', currentYear: () => year,
+    hint: '검색어를 입력해 두면 검색 결과만 담깁니다.',
+    onExcel: (p) => downloadCompany({ kind: 'sales', period: p, q: filter }),
+    onCsv: async (p, label) => {
+      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
+      downloadCsv(fileSafe(`뉴토크코리아_매출내역_${label}${filter ? `_${filter}` : ''}_${stamp()}`), datasetSheet('sales', d.sales.filter(match)));
+    },
+  });
   main.querySelector('#s-table').addEventListener('click', async (e) => {
     const id = Number(e.target.dataset.edit || e.target.dataset.del);
     const r = rows.find((x) => x.id === id);
