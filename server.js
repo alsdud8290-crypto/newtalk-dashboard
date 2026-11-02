@@ -393,20 +393,27 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   const scopeName = sc ? sc.label.replace(/\s/g, '') : '전체';
   // 검색어 없이 받은 파일에는 '안내' 시트(기간 표시)를 넣어, 다시 올리면 그 기간만 교체되게 한다
   const guide = !q;
+  // 기간을 고르면 그 기간의 달(이번 달까지)은 데이터가 없어도 회사 양식 시트를 넣는다 (빈 양식으로 작성할 수 있게)
+  const scopeMonths = async () => {
+    const set = new Set(await ledger.monthsWithData(sc));
+    for (let m = sc.from; m <= sc.to && m <= thisMonth;) {
+      set.add(m);
+      const [yy, mm] = m.split('-').map(Number);
+      m = mm === 12 ? `${yy + 1}-01` : `${yy}-${p2(mm + 1)}`;
+    }
+    return [...set].sort();
+  };
+  // 월·분기 파일에는 1년 단위 값인 연간목표를 넣지 않는다
+  const targets = async () => (sc && sc.from.slice(5) === '01' && sc.to.slice(5) === '12' || !sc ? src.targets() : undefined);
   let spec;
   let label;
   if (kind === 'monthly') {
-    spec = { guide, scope: sc, months: await ledger.monthsWithData(sc), data: { targets: await src.targets(), monthly: await src.monthly() } };
+    spec = { guide, scope: sc, months: sc ? await scopeMonths() : await ledger.monthsWithData(null), data: { targets: await targets(), monthly: await src.monthly() } };
     label = `월별실적_${scopeName}`;
   } else if (kind === 'receivables') {
     if (sc) {
-      // 기간: 달마다 월말 기준 미수금 현황 + 그 기간에 청구된 건(미수·수금 완료 모두)
-      const months = [];
-      for (let m = sc.from; m <= sc.to && m <= thisMonth;) {
-        months.push(m);
-        const [yy, mm] = m.split('-').map(Number);
-        m = mm === 12 ? `${yy + 1}-01` : `${yy}-${p2(mm + 1)}`;
-      }
+      // 기간: 달마다 그 기간의 미수금 현황 + 그 기간에 청구된 건(미수·수금 완료 모두)
+      const months = await scopeMonths();
       spec = { guide, scope: sc, months, data: { receivables: (await src.receivables()).filter(like(['customer'])) } };
       label = `미수금_${scopeName}`;
     } else {
@@ -420,11 +427,10 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
     spec = { data: { targets: await src.targets() } };
     label = '연간목표';
   } else {
-    const months = await ledger.monthsWithData(sc);
+    const months = sc ? await scopeMonths() : await ledger.monthsWithData(null);
     const rec = await src.receivables();
-    const inScope = !sc || (thisMonth >= sc.from && thisMonth <= sc.to);
-    if (!months.includes(thisMonth) && inScope && (await db.get('SELECT 1 FROM receivables LIMIT 1'))) months.push(thisMonth);
-    spec = { guide: true, scope: sc, months: months.sort(), data: { targets: await src.targets(), monthly: await src.monthly(), sales: await sales(), receivables: rec } };
+    if (!sc && !months.includes(thisMonth) && (await db.get('SELECT 1 FROM receivables LIMIT 1'))) months.push(thisMonth);
+    spec = { guide: true, scope: sc, months: months.sort(), data: { targets: await targets(), monthly: await src.monthly(), sales: await sales(), receivables: rec } };
     label = scopeName;
   }
   const buf = await ledger.buildCompanyWorkbook(spec);
