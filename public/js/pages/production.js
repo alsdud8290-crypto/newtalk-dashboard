@@ -1,7 +1,7 @@
 // 생산팀 대시보드 (ITB2026에서 옮겨 옴): 납기 임박(오늘 기준) + 생산 실적(목표 대비·비교) + 납기·출고 + 판매 실적
 import { api, esc, toast } from '../core.js';
 import { gauge, prodBars, donut, SERIES, OTHER, INDUSTRY_COLORS, ORDER_LINE, hideTooltip } from '../charts.js';
-import { periodDownloadButton, bindPeriodDownload, downloadFrom } from '../exporter.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom, addCardMenus, bindCardMenus } from '../exporter.js';
 import { prodPeriod, setProdPeriod, periodQS, periodSelector, dlPeriod, statusChip, dDayChip, orderLabel, qty, dash } from './prod-common.js';
 
 const store = (key, def) => { try { return { ...def, ...JSON.parse(localStorage.getItem(key) || '{}') }; } catch { return { ...def }; } };
@@ -17,6 +17,8 @@ export async function render(main, ctx) {
   const charts = [];
   const destroy = () => { while (charts.length) charts.pop().destroy(); hideTooltip(); };
   let data = null;
+  let soon = null;
+  let salesData = null;
 
   main.innerHTML = `
     <div id="pd-soon"></div>
@@ -29,8 +31,9 @@ export async function render(main, ctx) {
 
   // ---------- 납기 임박 (기간 선택과 관계없이 오늘 기준) ----------
   api('/api/production/due-soon').then((d) => {
+    soon = d;
     main.querySelector('#pd-soon').innerHTML = `
-      <div class="card" style="margin-bottom:18px">
+      <div class="card" style="margin-bottom:18px" data-card="soon">
         <div class="card-head"><div class="ttl"><h3>납기 임박</h3><span class="hint">오늘부터 ${d.days}일 안 + 납기 지남, 출고가 끝나지 않은 수주 ${d.items.length}건</span></div>
           <a class="btn sm" href="#/production/calendar">납기 캘린더 →</a></div>
         ${!d.items.length ? `<div class="empty" style="padding:18px">${d.days}일 안에 납기가 돌아오는 미출고 수주가 없습니다.</div>` : `
@@ -41,6 +44,7 @@ export async function render(main, ctx) {
             <td>${dash(o.customers.join(', '))}</td><td>${dash(o.projects.join(', '))}</td><td class="r num">${o.shipped} / ${qty(o.quantity)}</td><td>${statusChip(o)}</td></tr>`).join('')}</tbody>
         </table></div>`}
       </div>`;
+    addCardMenus(main.querySelector('#pd-soon'));
     main.querySelector('#pd-soon').addEventListener('click', (e) => { const a = e.target.closest('[data-date]'); if (a) sessionStorage.setItem('calendarDate', a.dataset.date); });
   }).catch((e) => { main.querySelector('#pd-soon').innerHTML = `<div class="notice err">${esc(e.message)}</div>`; });
 
@@ -88,7 +92,7 @@ export async function render(main, ctx) {
     const targetName = view.barUnit === 'month' ? '월 목표' : '분기 목표';
     const bt = barTarget();
     main.querySelector('#pd-body').innerHTML = `
-      <div class="card" style="margin-bottom:18px">
+      <div class="card" style="margin-bottom:18px" data-card="production">
         <div class="card-head">
           <div class="ttl"><h3>${esc(data.period.label)} 생산 실적</h3></div>
           <div class="filters">
@@ -149,7 +153,7 @@ export async function render(main, ctx) {
       </div>
 
       <div class="split2" style="margin-bottom:18px">
-        <div class="card">
+        <div class="card" data-card="delivery">
           <div class="card-head"><div class="ttl"><h3>${esc(data.period.label)} 납기 준수율</h3><span class="hint">납기일이 이 기간에 있고 이미 지난 제품</span></div></div>
           ${!dl.total ? `<div class="empty">아직 납기가 온 제품이 없습니다${dl.not_due_yet ? ` (납기 전 ${dl.not_due_yet}대)` : ''}.</div>` : `
           <div class="kv-row"><span>준수율 <b class="big">${dl.rate}%</b></span><span>대상 ${qty(dl.total)}</span>${dl.avg_delay_days !== null ? `<span>평균 지연 ${dl.avg_delay_days}일</span>` : ''}${dl.not_due_yet ? `<span class="muted">납기 전 ${dl.not_due_yet}대 제외</span>` : ''}</div>
@@ -161,7 +165,7 @@ export async function render(main, ctx) {
               <table class="tbl mini"><tbody>${dl[k].filter((r) => r.total).slice(0, 5).map((r) => `<tr><td>${esc(r.name)}</td><td class="r">${r.rate === null ? '-' : `${r.rate}%`}</td><td class="r muted">${r.on_time}/${r.total}대</td></tr>`).join('')}</tbody></table></div>`).join('')}
           </div>`}
         </div>
-        <div class="card">
+        <div class="card" data-card="unshipped">
           <div class="card-head"><div class="ttl"><h3>미출고 현황</h3><span class="hint">오늘(${un.as_of}) 기준 · 제조됐고 출고일이 없는 제품 ${qty(un.total)}</span></div></div>
           ${!un.total ? '<div class="empty">미출고 제품이 없습니다.</div>' : `
           <div class="buckets">${un.buckets.map((b) => `<div><span>${b.label}</span><div class="bar"><i style="width:${b.count / maxBucket * 100}%"></i></div><b>${qty(b.count)}</b></div>`).join('')}</div>
@@ -172,6 +176,7 @@ export async function render(main, ctx) {
         </div>
       </div>`;
 
+    addCardMenus(main.querySelector('#pd-body'));
     // 그래프
     if (hasTarget) charts.push(gauge(main.querySelector('#pd-gauge'), pr.actual, pr.period_target, { fmt: (v) => `${fmt1(v)}대` }));
     else charts.push(gauge(main.querySelector('#pd-gauge'), 0, 0));
@@ -243,6 +248,7 @@ export async function render(main, ctx) {
   }
 
   function drawSales(d) {
+    salesData = d;
     const s = d.sales;
     const industryColor = (n) => INDUSTRY_COLORS[n] || OTHER;
     const sum = (rows) => rows.reduce((a, r) => a + r.quantity, 0);
@@ -250,7 +256,7 @@ export async function render(main, ctx) {
     const el = main.querySelector('#pd-sales');
     if (el.__chart) { el.__chart.destroy(); el.__chart = null; }
     el.innerHTML = `
-      <div class="card">
+      <div class="card" data-card="sales">
         <div class="card-head"><div class="ttl"><h3>${esc(d.period.label)} 판매 실적</h3><span class="hint">수주서 제품 수량 · 항목을 누르면 나머지 순위가 그 조건으로 좁혀집니다</span></div></div>
         <div class="filters" style="margin-bottom:12px">
           ${Object.entries(OPTIONS).map(([k, [l, ch]]) => `<label>${l} <select class="input" data-opt="${k}">${ch.map(([v, t]) => `<option value="${v}" ${settings[k] === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`).join('')}
@@ -268,6 +274,7 @@ export async function render(main, ctx) {
         </div>
         <p class="hint" style="margin:12px 0 0">거래처·제품은 개수가 정해져 있지 않아 원형 그래프 대신 순위 막대와 비중(%)으로 보여 줍니다. ▲▼는 비교 기간 대비 증감입니다.</p>
       </div>`;
+    addCardMenus(el);
     if (s.by_industry.length) el.__chart = donut(el.querySelector('#ps-ind'), null, s.by_industry.map((r) => ({ label: r.name, value: r.quantity })), industryColor, { fmt: qty, onSelect: (v) => toggleFilter('industry', v) });
     el.querySelectorAll('[data-opt]').forEach((sel) => sel.addEventListener('change', () => {
       settings[sel.dataset.opt] = sel.value;
@@ -285,6 +292,60 @@ export async function render(main, ctx) {
     };
   }
   const toggleFilter = (k, v) => { filters[k] = filters[k] === v ? '' : v; loadSales(); };
+
+  // 카드별 [⬇] → 이미지(PNG) · 데이터(CSV). 표는 화면에 보이는 내용 그대로
+  const rankRows = (rows) => { const total = rows.reduce((a, r) => a + r.quantity, 0); return rows.map((r) => [r.name, r.quantity, total ? Math.round(r.quantity / total * 1000) / 10 : 0, ...(r.change !== null && r.change !== undefined ? [r.change] : [])]); };
+  const section = (title, head, rows) => [[title], head, ...rows, []];
+  function cardData(key) {
+    const label = data?.period.label || '';
+    if (key === 'soon' && soon) {
+      return { name: '납기임박', aoa: [['D-day', '납기일', '수주번호', '판매처', '사업명', '출고', '대수', '상태'],
+        ...soon.items.map((o) => [o.d_day, o.due_date, o.po_no, o.customers.join(', '), o.projects.join(', '), o.shipped, o.quantity, o.overdue ? '납기 지남' : { done: '출고 완료', partial: '일부 출고', pending: '출고 전' }[o.status]])] };
+    }
+    if (!data) return null;
+    if (key === 'production') {
+      const pr = data.production;
+      const yp = data.year_progress;
+      const bars = barsData();
+      return { name: '생산실적', aoa: [
+        ...section(`${label} 생산 실적`, ['항목', '값'], [['생산량(대)', pr.actual], ['기간 목표(대)', pr.period_target ?? ''], ['달성률(%)', pr.achievement_rate ?? ''], ['부족치(대)', pr.shortfall ?? ''],
+          ...(data.compare ? [[`${data.compare.label} 생산량(대)`, data.compare.actual], ['증감(대)', data.compare.change]] : [])]),
+        ...section(`${data.period.start.slice(0, 4)}년 ${view.barUnit === 'month' ? '월별' : '분기별'} 생산`, [view.barUnit === 'month' ? '월' : '분기', '생산량(대)', '수주량(대)', view.barUnit === 'month' ? '월 목표(대)' : '분기 목표(대)', ...(view.compare !== 'none' ? ['전년(대)'] : [])],
+          bars.map((b) => [b.label, b.actual, b.orders, barTarget() ?? '', ...(view.compare !== 'none' ? [b.lastYear ?? 0] : [])])),
+        ...section(`${yp.year}년 연간 목표 진행`, ['항목', '값'], [['연간 목표(대)', yp.annual_target ?? ''], ['누적(대)', yp.cumulative], ['남은 양(대)', yp.remaining ?? ''], ['월 평균 필요(대)', yp.required_per_month ?? ''], ['연말 예상(대, 예측)', yp.forecast ?? '']]),
+        ...section(`${label} 모델별 생산`, ['모델', '생산량(대)', '비중(%)'], rankRows(data.by_model)),
+      ] };
+    }
+    if (key === 'delivery') {
+      const dl = data.delivery;
+      const head = ['이름', '준수율(%)', '기한 내 출고(대)', '늦게 출고(대)', '미출고·납기 지남(대)', '대상(대)'];
+      const row = (r) => [r.name, r.rate ?? '', r.on_time, r.late, r.open, r.total];
+      return { name: '납기준수율', aoa: [
+        ...section(`${label} 납기 준수율`, head, [row({ ...dl, name: '전체' })]),
+        ...section('모델별', head, dl.by_model.map(row)),
+        ...section('거래처별', head, dl.by_customer.map(row)),
+      ] };
+    }
+    if (key === 'unshipped') {
+      const un = data.unshipped;
+      return { name: '미출고현황', aoa: [
+        ...section(`미출고 현황 (${un.as_of} 기준)`, ['경과', '대수'], un.buckets.map((b) => [b.label, b.count])),
+        ...section('모델별', ['모델', '대수'], un.by_model.map((m) => [m.name, m.quantity])),
+        ...section('가장 오래된 미출고', ['일련번호', '모델', '제조일', '경과일'], un.oldest.map((r) => [r.serial_full, r.model_name, r.manufactured_date, r.days])),
+      ] };
+    }
+    if (key === 'sales' && salesData) {
+      const s = salesData.sales;
+      const head = (n) => [n, '수량(대)', '비중(%)', ...(s.compare ? ['증감(대)'] : [])];
+      return { name: '판매실적', aoa: [
+        ...section(`${salesData.period.label} 판매 실적 (합계 ${s.total}대)`, head('산업 분야'), rankRows(s.by_industry)),
+        ...section('거래처', head('거래처'), rankRows(s.by_customer)),
+        ...section('제품', head('제품'), rankRows(s.by_product)),
+      ] };
+    }
+    return null;
+  }
+  bindCardMenus(main, { getData: cardData, prefix: '생산팀', label: () => data?.period.label || '' });
 
   // 엑셀: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
   bindPeriodDownload(main, 'pd-dl', {

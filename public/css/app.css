@@ -516,6 +516,12 @@ b.big { font-size: 20px; }
 .korea-map .dots circle:hover { fill-opacity: 1; }
 .map-credit { position: absolute; right: 4px; bottom: 0; font-size: 10.5px; color: var(--text-3); }
 .tbl.rank.static td { cursor: default; }
+/* 교체 부품 순위: 열 너비를 고정해 카드 밖으로 밀리지 않게 (현재 단가 칸이 잘리던 문제) */
+.tbl.parts-rank { table-layout: fixed; }
+.tbl.parts-rank td.nm { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+.tbl.parts-rank .inline-bar span { max-width: 45%; }
+.tbl.parts-rank td.r { white-space: normal; overflow-wrap: anywhere; }
+.tbl.parts-rank th { padding: 8px 6px; }
 .inline-bar { display: flex; align-items: center; gap: 8px; }
 .inline-bar span { display: block; height: 8px; border-radius: 999px; background: var(--navy); opacity: .85; min-width: 2px; max-width: 70%; }
 .inline-bar b { font-size: 12px; white-space: nowrap; }

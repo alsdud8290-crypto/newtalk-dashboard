@@ -4,7 +4,7 @@
 import { api, esc, toast, today } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip } from '../korea-map.js';
-import { periodDownloadButton, bindPeriodDownload, downloadFrom } from '../exporter.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom, addCardMenus, bindCardMenus } from '../exporter.js';
 import { prodPeriod, periodQS, periodSelector, dlPeriod, dash } from './prod-common.js';
 
 const PAID_COLORS = { 유상: SERIES[0], 무상: SERIES[2] };
@@ -57,10 +57,10 @@ export async function render(main) {
     const modelMax = Math.max(1, ...s.by_model.map((m) => m.quantity));
 
     main.querySelector('#sv-body').innerHTML = `
-      <div class="card" style="margin-bottom:18px">
+      <div class="card" style="margin-bottom:18px" data-card="trips">
+        <div class="card-head"><div class="ttl"><h3>${esc(data.period.label)} 출장 실적</h3></div></div>
         <div class="sv-top">
           <div>
-            <div class="sub-ttl">${esc(data.period.label)} 출장 실적</div>
             <div class="big-num">${s.trip_count.toLocaleString('ko-KR')}<small>회</small></div>
             <div class="hint" style="margin-bottom:10px">출장 시작일 기준, 여러 날 출장도 1회</div>
             <div class="donut-row"><div class="donut-box small"><canvas id="sv-paid"></canvas></div><div class="legend" id="sv-paid-legend"></div></div>
@@ -73,27 +73,27 @@ export async function render(main) {
         </div>
       </div>
       <div class="split2" style="margin-bottom:18px">
-        <div class="card">
+        <div class="card" data-card="map">
           <div class="card-head"><div class="ttl"><h3>출장지 지도</h3><span class="hint">점이 클수록 출장이 많음 (점에 마우스를 올리면 횟수)</span></div>
             <div class="seg sm" id="sv-level">${[['region', '시·도별'], ['district', '시·군별']].map(([v, l]) => `<button type="button" data-l="${v}" class="${level === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
           <div id="sv-map" class="map-wrap"></div>
           ${level === 'district' ? '<p class="hint" style="margin:6px 0 0">특별·광역시·세종시는 시 전체를 점 하나로 표시합니다.</p>' : ''}
         </div>
-        <div class="card">
+        <div class="card" data-card="regions">
           <div class="card-head"><div class="ttl"><h3>지역별 출장 순위</h3><span class="hint">${level === 'region' ? '시·도별' : '시·군별'}</span></div></div>
           ${hbars(regionItems, '회', { limit: 17 })}
         </div>
       </div>
       <div class="split3">
-        <div class="card">
+        <div class="card" data-card="parts">
           <div class="card-head"><div class="ttl"><h3>교체 부품 순위</h3><span class="hint">사용 횟수 (보고서에 수량이 없어 1회씩)</span></div><a class="btn sm" href="#/prices/parts">단가 보기</a></div>
-          ${!s.by_part.length ? '<div class="empty">데이터가 없습니다.</div>' : `<table class="tbl rank static"><thead><tr><th>부품명</th><th>사용 횟수</th><th class="r">현재 단가</th></tr></thead><tbody>${s.by_part.slice(0, 10).map((p) => {
+          ${!s.by_part.length ? '<div class="empty">데이터가 없습니다.</div>' : `<table class="tbl rank static parts-rank"><colgroup><col style="width:34%"><col style="width:24%"><col style="width:42%"></colgroup><thead><tr><th>부품명</th><th>사용 횟수</th><th class="r">현재 단가</th></tr></thead><tbody>${s.by_part.slice(0, 10).map((p) => {
             const max = s.by_part[0].quantity;
-            const ch = p.change ? `<div class="${p.change > 0 ? 'up' : 'down'}" style="font-size:11px">직전 대비 ${p.change > 0 ? '+' : ''}${p.change.toLocaleString('ko-KR')}원${p.change_rate !== null ? ` (${p.change_rate > 0 ? '+' : ''}${p.change_rate}%)` : ''}</div>` : '';
+            const ch = p.change ? `<div class="${p.change > 0 ? 'up' : 'down'}" style="font-size:11px" title="직전 단가 대비">직전 ${p.change > 0 ? '+' : ''}${p.change.toLocaleString('ko-KR')}원${p.change_rate !== null ? ` (${p.change_rate > 0 ? '+' : ''}${p.change_rate}%)` : ''}</div>` : '';
             return `<tr><td class="nm" title="${esc(p.name)}">${esc(p.name)}</td><td><div class="inline-bar"><span style="width:${p.quantity / max * 100}%"></span><b>${p.quantity}회</b></div></td><td class="r num">${wonText(p.current_price)}${ch}</td></tr>`;
           }).join('')}</tbody></table>`}
         </div>
-        <div class="card">
+        <div class="card" data-card="models">
           <div class="card-head"><div class="ttl"><h3>A/S 제품 모델 순위</h3><span class="hint">수량 · 유상·무상</span></div></div>
           <div class="diff-legend">${['유상', '무상'].map((n) => `<span><i style="background:${paidColor(n)}"></i>${n}</span>`).join('')}</div>
           ${!s.by_model.length ? '<div class="empty">데이터가 없습니다.</div>' : `<div class="split-bars">${s.by_model.slice(0, 10).map((m) => `
@@ -101,13 +101,14 @@ export async function render(main) {
               <span class="bars"><i style="width:${m.paid / modelMax * 100}%;background:${paidColor('유상')}"></i><i style="width:${m.unpaid / modelMax * 100}%;background:${paidColor('무상')}"></i></span>
               <b>${m.quantity}대</b></div>`).join('')}</div>`}
         </div>
-        <div class="card">
+        <div class="card" data-card="persons">
           <div class="card-head"><div class="ttl"><h3>출장 담당자 비중</h3><span class="hint">작성자+동행자, 보고서 1건당 1인 1회</span></div></div>
           ${persons.length ? '<div class="donut-row"><div class="donut-box small"><canvas id="sv-person"></canvas></div><div class="legend" id="sv-person-legend"></div></div>' : '<div class="empty">데이터가 없습니다.</div>'}
           <p class="hint" style="margin:10px 0 0">비중 = 전체 참여 ${personTotal}회 중 차지하는 몫${s.by_person.length > PERSON_TOP ? ' · 6위부터는 "기타"로 묶음' : ''}</p>
         </div>
       </div>`;
 
+    addCardMenus(main.querySelector('#sv-body'));
     charts.push(donut(main.querySelector('#sv-paid'), main.querySelector('#sv-paid-legend'), s.paid.map((p) => ({ label: p.name, value: p.quantity })), paidColor, { fmt: cnt }));
     const hl = data.period.months.map((m) => m - 1);
     charts.push(countStack(main.querySelector('#sv-monthly'), s.monthly.map((m) => `${m.month}월`), [
@@ -123,6 +124,28 @@ export async function render(main) {
     }
     main.querySelector('#sv-level').addEventListener('click', (e) => { const b = e.target.closest('[data-l]'); if (b && b.dataset.l !== level) { level = b.dataset.l; draw(); } });
   }
+
+  // 카드별 [⬇] → 이미지(PNG) · 데이터(CSV). 표는 화면에 보이는 내용 그대로
+  const share = (rows) => { const t = rows.reduce((a, r) => a + r.quantity, 0); return rows.map((r) => [r.name, r.quantity, t ? Math.round(r.quantity / t * 1000) / 10 : 0]); };
+  function cardData(key) {
+    if (!data) return null;
+    const s = data.service;
+    const label = data.period.label;
+    const lv = level === 'region' ? '시·도' : '시·군';
+    switch (key) {
+      case 'trips': return { name: '출장실적', aoa: [
+        [`${label} 출장 실적`], ['항목', '횟수(회)'], ['출장 횟수', s.trip_count], ...s.paid.map((p) => [p.name, p.quantity]), [],
+        [`${data.period.start.slice(0, 4)}년 월별 출장`], ['월', '유상(회)', '무상(회)', '합계(회)'], ...s.monthly.map((m) => [`${m.month}월`, m.paid, m.unpaid, m.count])] };
+      case 'map':
+      case 'regions': return { name: `지역별출장_${lv}`, aoa: [[lv, '횟수(회)', '비중(%)'], ...share(level === 'region' ? s.by_region : s.by_district)] };
+      case 'parts': return { name: '교체부품순위', aoa: [['부품명', '사용 횟수(회)', '현재 단가(원)', '직전 대비(원)', '직전 대비(%)'],
+        ...s.by_part.map((p) => [p.name, p.quantity, p.current_price ?? '', p.change ?? '', p.change_rate ?? ''])] };
+      case 'models': return { name: 'AS제품모델순위', aoa: [['모델', '유상(대)', '무상(대)', '합계(대)'], ...s.by_model.map((m) => [m.name, m.paid, m.unpaid, m.quantity])] };
+      case 'persons': return { name: '출장담당자', aoa: [['담당자', '참여(회)', '비중(%)'], ...share(s.by_person)] };
+      default: return null;
+    }
+  }
+  bindCardMenus(main, { getData: cardData, prefix: '서비스팀', label: () => data?.period.label || '' });
 
   bindPeriodDownload(main, 'sv-dl', {
     ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,

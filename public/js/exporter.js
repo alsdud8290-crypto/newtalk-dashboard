@@ -228,3 +228,73 @@ export function bindPeriodDownload(root, id, opts) {
     e.target.disabled = false;
   });
 }
+
+// ---------- 카드별 [⬇] 내려받기 (이미지 PNG · 데이터 CSV) ----------
+// 카드 머리 정리: 설명(hint)은 제목 아래 작은 줄로, 오른쪽에는 상태 배지 + [⬇] 내려받기 메뉴(PNG/CSV)
+export function addCardMenus(root) {
+  root.querySelectorAll('[data-card]').forEach((card) => {
+    const head = card.querySelector(':scope > .card-head, :scope > .section-title');
+    if (!head || head.querySelector('.dl-menu')) return;
+    let tools = head.querySelector(':scope > .card-tools');
+    if (!tools) {
+      tools = document.createElement('div');
+      tools.className = 'card-tools';
+      if (head.classList.contains('card-head')) {
+        const had = head.querySelector(':scope > .ttl');
+        const ttl = had || document.createElement('div');
+        ttl.className = 'ttl';
+        if (!had) head.prepend(ttl);
+        [...head.children].forEach((c) => {
+          if (c === ttl) return;
+          if (c.tagName === 'H3' || c.classList.contains('hint')) ttl.append(c);
+          else tools.append(c);
+        });
+      }
+      head.append(tools);
+    }
+    const menu = document.createElement('div');
+    menu.className = 'dl-menu';
+    menu.setAttribute('data-no-export', '');
+    menu.innerHTML = `
+      <button type="button" class="btn sm dl-btn" data-dl-toggle title="내려받기" aria-haspopup="menu">⬇</button>
+      <div class="dl-pop" role="menu" hidden>
+        <button type="button" data-export="png" role="menuitem">이미지 (PNG)</button>
+        <button type="button" data-export="csv" role="menuitem">데이터 (CSV)</button>
+      </div>`;
+    tools.append(menu);
+  });
+}
+// 카드 메뉴 동작: getData(카드 키) → { name, aoa, formats }, prefix·label은 파일 이름에 씀
+let menuCloser = false;
+//  root(화면 본문)는 페이지가 바뀌어도 같은 요소라, 듣는 함수는 한 번만 붙이고 새 페이지의 opts로 바꿔 끼운다
+export function bindCardMenus(root, opts) {
+  root.__cardMenus = opts;
+  if (root.__cardMenusBound) return;
+  root.__cardMenusBound = true;
+  if (!menuCloser) {
+    menuCloser = true;
+    document.addEventListener('click', (e) => { if (!e.target.closest('.dl-menu')) document.querySelectorAll('.dl-pop').forEach((p) => { p.hidden = true; }); });
+  }
+  root.addEventListener('click', async (e) => {
+    const toggle = e.target.closest('[data-dl-toggle]');
+    if (toggle) {
+      const pop = toggle.nextElementSibling;
+      const open = pop.hidden;
+      document.querySelectorAll('.dl-pop').forEach((p) => { p.hidden = true; });
+      pop.hidden = !open;
+      return;
+    }
+    const btn = e.target.closest('[data-export]');
+    if (!btn) return;
+    btn.closest('.dl-pop').hidden = true;
+    const { getData, prefix = '뉴토크코리아', label = () => '' } = root.__cardMenus;
+    const card = btn.closest('[data-card]');
+    const data = getData(card.dataset.card);
+    if (!data) return;
+    const name = fileSafe(`${prefix}_${data.name}_${label()}_${stamp()}`);
+    if (btn.dataset.export === 'csv') return downloadCsv(name, data);
+    btn.disabled = true;
+    await downloadImage(card, name);
+    btn.disabled = false;
+  });
+}

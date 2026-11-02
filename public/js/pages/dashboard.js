@@ -1,6 +1,6 @@
 import { api, esc, won, pct, period, setPeriod, yearOptions, toast } from '../core.js';
 import { donut, gauge, compareBar, hideTooltip, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
-import { downloadXlsx, downloadCsv, downloadImage, fileSafe, stamp } from '../exporter.js';
+import { downloadXlsx, downloadImage, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
 
 let charts = [];
 let loadSeq = 0; // 늦게 도착한 이전 조회 결과는 버린다 (빠른 연속 클릭·화면 이동 대비)
@@ -130,28 +130,7 @@ export async function render(main) {
   });
   main.querySelector('#d-xlsx').addEventListener('click', () => current && exportNumbers(current));
   // 카드별 [PNG] [CSV] 저장
-  const closeMenus = () => main.querySelectorAll('.dl-pop').forEach((p) => { p.hidden = true; });
-  document.addEventListener('click', (e) => { if (!e.target.closest('.dl-menu')) closeMenus(); });
-  main.querySelector('#d-body').addEventListener('click', async (e) => {
-    const toggle = e.target.closest('[data-dl-toggle]');
-    if (toggle) {
-      const pop = toggle.nextElementSibling;
-      const open = pop.hidden;
-      closeMenus();
-      pop.hidden = !open;
-      return;
-    }
-    if (e.target.closest('[data-export]')) closeMenus();
-    const btn = e.target.closest('[data-export]');
-    if (!btn || !current) return;
-    const card = btn.closest('[data-card]');
-    const data = cardData(card.dataset.card, current);
-    const name = fileSafe(`뉴토크코리아_${data.name}_${current.label}_${stamp()}`);
-    if (btn.dataset.export === 'csv') return downloadCsv(name, data);
-    btn.disabled = true;
-    await downloadImage(card, name);
-    btn.disabled = false;
-  });
+  bindCardMenus(main, { getData: (key) => current && cardData(key, current), prefix: '뉴토크코리아', label: () => current?.label || '' });
 
   await load(main);
   return () => { loadSeq += 1; hideTooltip(); charts.forEach((c) => c.destroy()); charts = []; };
@@ -293,42 +272,9 @@ async function load(main) {
   emptyLegend(body, 'c-series', serTotal, '매출 내역이 없습니다.<br><a href="#/input/sales">매출 내역 입력 →</a>');
 
   renderAi(body.querySelector('#ai-card'), s, ai);
-  addCardButtons(body);
+  addCardMenus(body);
 }
 
-// 카드 머리 정리: 설명(hint)은 제목 아래 작은 줄로, 오른쪽에는 상태 배지 + [⬇] 내려받기 메뉴(PNG/CSV)
-function addCardButtons(root) {
-  root.querySelectorAll('[data-card]').forEach((card) => {
-    const head = card.querySelector(':scope > .card-head, :scope > .section-title');
-    if (!head || head.querySelector('.dl-menu')) return;
-    let tools = head.querySelector(':scope > .card-tools');
-    if (!tools) {
-      tools = document.createElement('div');
-      tools.className = 'card-tools';
-      if (head.classList.contains('card-head')) {
-        const ttl = document.createElement('div');
-        ttl.className = 'ttl';
-        head.prepend(ttl);
-        [...head.children].forEach((c) => {
-          if (c === ttl) return;
-          if (c.tagName === 'H3' || c.classList.contains('hint')) ttl.append(c);
-          else tools.append(c);
-        });
-      }
-      head.append(tools);
-    }
-    const menu = document.createElement('div');
-    menu.className = 'dl-menu';
-    menu.setAttribute('data-no-export', '');
-    menu.innerHTML = `
-      <button type="button" class="btn sm dl-btn" data-dl-toggle title="내려받기" aria-haspopup="menu">⬇</button>
-      <div class="dl-pop" role="menu" hidden>
-        <button type="button" data-export="png" role="menuitem">이미지 (PNG)</button>
-        <button type="button" data-export="csv" role="menuitem">데이터 (CSV)</button>
-      </div>`;
-    tools.append(menu);
-  });
-}
 
 const M = '#,##0';
 const P = '0.0%';
@@ -504,7 +450,7 @@ function renderAi(el, s, ai) {
         <div><h4><span class="dot" style="background:var(--good)"></span>${nextLabel[s.mode]} 개선할 점</h4>${list(ai.nextActions, '-')}</div>
       </div>`
     : '<div class="ai-meta">아직 분석이 없습니다. [분석 생성]을 누르면 이 기간의 매출 상황, 부족한 점, 다음 기간 개선점을 요약합니다.</div>'}`;
-  addCardButtons(el.parentElement);
+  addCardMenus(el.parentElement);
   el.querySelector('#ai-gen').addEventListener('click', async (e) => {
     e.target.disabled = true;
     e.target.textContent = '분석 중…';
