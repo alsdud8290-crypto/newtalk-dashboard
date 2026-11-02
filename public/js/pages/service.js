@@ -114,7 +114,12 @@ export async function render(main) {
       { label: '무상', data: s.monthly.map((m) => m.unpaid), color: paidColor('무상') },
     ], { highlight: hl }));
     if (persons.length) charts.push(donut(main.querySelector('#sv-person'), main.querySelector('#sv-person-legend'), persons, personColor, { fmt: cnt }));
-    await koreaMap(main.querySelector('#sv-map'), regionItems, { small: level === 'district' });
+    // 지도를 못 불러와도 나머지 화면은 그대로 보이게
+    try {
+      await koreaMap(main.querySelector('#sv-map'), regionItems, { small: level === 'district' });
+    } catch {
+      main.querySelector('#sv-map').innerHTML = '<div class="empty">지도를 불러오지 못했습니다. 오른쪽 지역별 순위를 참고해 주세요.</div>';
+    }
     main.querySelector('#sv-level').addEventListener('click', (e) => { const b = e.target.closest('[data-l]'); if (b && b.dataset.l !== level) { level = b.dataset.l; draw(); } });
   }
 

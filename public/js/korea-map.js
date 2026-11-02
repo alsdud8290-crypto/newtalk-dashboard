@@ -5,7 +5,14 @@ import { SERIES } from './charts.js';
 import { pointOf, REGION_ALIASES } from './regions.js';
 
 let geo = null;
-const loadGeo = async () => (geo ||= await (await fetch('/data/skorea_provinces.json')).json());
+async function loadGeo() {
+  if (!geo) {
+    const res = await fetch('/data/skorea_provinces.json');
+    if (!res.ok) throw new Error('지도 경계 파일을 불러오지 못했습니다.');
+    geo = await res.json();
+  }
+  return geo;
+}
 
 // 위도 36° 근처라 경도에 cos(36°)를 곱한 단순 투영 (한국 범위에서는 충분)
 const K = Math.cos((36 * Math.PI) / 180);
