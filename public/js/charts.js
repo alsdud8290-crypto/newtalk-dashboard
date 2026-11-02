@@ -326,3 +326,29 @@ export function prodBars(canvas, bars, { target, targetName = '목표', unitName
     },
   });
 }
+
+// 횟수 쌓은 막대 (예: 월별 출장 유상·무상). highlight: 진하게 보일 막대 번호 목록(나머지는 흐리게)
+export function countStack(canvas, labels, stacks, { highlight = null, unit = '회' } = {}) {
+  const on = (i) => !highlight || highlight.includes(i);
+  return new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: stacks.map((s) => ({ label: s.label, data: s.data, backgroundColor: s.data.map((_, i) => (on(i) ? s.color : `${s.color}59`)),
+        borderRadius: 3, borderSkipped: false, maxBarThickness: 26, stack: 'a' })),
+    },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true, grid: { display: false }, border: { color: INK.grid } },
+        y: { stacked: true, beginAtZero: true, grid: { color: INK.grid }, border: { display: false }, ticks: { precision: 0 } },
+      },
+      plugins: {
+        tooltip: { callbacks: {
+          label: (c) => `${c.dataset.label}: ${c.parsed.y}${unit}`,
+          footer: (items) => `합계: ${items.reduce((a, i) => a + i.parsed.y, 0)}${unit}`,
+        } },
+      },
+    },
+  });
+}

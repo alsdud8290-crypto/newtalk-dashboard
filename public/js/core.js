@@ -12,6 +12,7 @@ export async function api(path, { method = 'GET', body } = {}) {
     const err = new Error(data?.error || `요청 실패 (${res.status})`);
     err.status = res.status;
     err.details = data?.details;
+    err.data = data;
     if (res.status === 401 && path !== '/api/login') window.dispatchEvent(new Event('auth:expired'));
     throw err;
   }

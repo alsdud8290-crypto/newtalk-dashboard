@@ -11,6 +11,7 @@ import * as ledger from './lib/ledger.js';
 import * as pricing from './lib/pricing.js';
 import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
+import * as service from './lib/service.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -616,6 +617,20 @@ prod.get('/orders/export', wrap(async (req, res) => {
 prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await production.earliestYear() })));
 app.use('/api/production', prod);
 
+// ---------- 서비스팀 (ITB2026에서 옮겨 옴) ----------
+// 조회는 서비스팀 열람 권한, 보고서 직접 입력·요청처 지역 변경은 서비스팀 수정 권한
+const svc = express.Router();
+svc.use(requirePerm('service'));
+svc.use(requireEditFor('service'));
+svc.get('/dashboard', wrap(async (req, res) => res.json(await service.dashboard(req.query))));
+svc.get('/reports', wrap(async (req, res) => res.json(await service.reportList(req.query))));
+svc.post('/reports', wrap(async (req, res) => res.status(201).json(await service.createReport(req.body || {}, req.user.id))));
+svc.get('/reports/:id', wrap(async (req, res) => res.json(await service.reportDetail(req.params.id))));
+svc.get('/form-choices', wrap(async (_req, res) => res.json(await service.formChoices())));
+svc.get('/requester-regions', wrap(async (_req, res) => res.json(await service.requesterRegions())));
+svc.patch('/requester-regions/:id', wrap(async (req, res) => res.json(await service.setRequesterRegion(req.params.id, req.body || {}))));
+app.use('/api/service', svc);
+
 // 팀 업로드 (추출 → 확인·수정 → 저장). 권한은 파일 종류를 맡은 팀의 수정 권한으로 lib/uploads.js에서 확인
 const up = express.Router();
 up.use(requireLogin);
@@ -631,9 +646,11 @@ app.use('/api', (_req, _res, next) => next(new HttpError(404, '없는 API입니�
 app.use((err, _req, res, _next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 ? '서버 오류가 발생했습니다.' : err.message, ...(err.batch ? { batch: err.batch } : {}) });
+  res.status(status).json({ error: status >= 500 ? '서버 오류가 발생했습니다.' : err.message,
+    ...(err.batch ? { batch: err.batch } : {}), ...(err.fields ? { fields: err.fields } : {}), ...(err.existing ? { existing: err.existing } : {}) });
 });
 
 await pricing.seedVirtualPricing();
 await production.seedVirtualProduction();
+await service.seedVirtualService();
 app.listen(PORT, () => console.log(`뉴토크 코리아 경영 대시보드: http://localhost:${PORT}`));

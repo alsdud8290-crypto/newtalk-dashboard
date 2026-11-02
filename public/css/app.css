@@ -503,3 +503,33 @@ b.big { font-size: 20px; }
   .cal-ev { font-size: 10px; padding: 1px 3px; }
 }
 .review .input { min-width: 0; }
+
+/* ---------- 서비스팀 화면 ---------- */
+.sv-top { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: 24px; align-items: center; }
+.big-num { font-size: 40px; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; }
+.big-num small { font-size: 16px; font-weight: 500; margin-left: 4px; color: var(--text-2); }
+.map-wrap { position: relative; }
+.korea-map { width: 100%; max-height: 560px; display: block; margin: 0 auto; }
+.korea-map .prov path { fill: #e9e5dd; stroke: #fff; stroke-width: 1; }
+.korea-map .prov path:hover { fill: #ddd7cc; }
+.korea-map .dots circle { fill-opacity: .82; stroke: #fff; stroke-width: 1.5; cursor: pointer; }
+.korea-map .dots circle:hover { fill-opacity: 1; }
+.map-credit { position: absolute; right: 4px; bottom: 0; font-size: 10.5px; color: var(--text-3); }
+.tbl.rank.static td { cursor: default; }
+.inline-bar { display: flex; align-items: center; gap: 8px; }
+.inline-bar span { display: block; height: 8px; border-radius: 999px; background: var(--navy); opacity: .85; min-width: 2px; max-width: 70%; }
+.inline-bar b { font-size: 12px; white-space: nowrap; }
+.tbl td .up { color: var(--orange-strong); }
+.tbl td .down { color: var(--navy); }
+.split-bars { display: grid; gap: 8px; }
+.split-bars > div { display: grid; grid-template-columns: 70px 1fr 50px; gap: 8px; align-items: center; font-size: 12.5px; }
+.split-bars .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.split-bars .bars { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
+.split-bars .bars i { display: block; height: 100%; }
+.split-bars b { text-align: right; }
+.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.prod-row { display: grid; grid-template-columns: 1.2fr 90px 1fr 1.2fr auto; gap: 8px; margin-bottom: 8px; }
+textarea.input { height: auto; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+tr.changed { background: var(--warning-soft); }
+@media (max-width: 1100px) { .sv-top { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .form-grid.three { grid-template-columns: 1fr; } .prod-row { grid-template-columns: 1fr 80px; } }

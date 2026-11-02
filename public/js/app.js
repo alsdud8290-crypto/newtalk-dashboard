@@ -6,7 +6,6 @@ import * as receivables from './pages/receivables.js';
 import * as upload from './pages/upload.js';
 import * as exportPage from './pages/export.js';
 import * as users from './pages/users.js';
-import * as placeholder from './pages/placeholder.js';
 import * as partPrices from './pages/part-prices.js';
 import * as partPriceInput from './pages/part-price-input.js';
 import * as pricing from './pages/pricing.js';
@@ -14,6 +13,7 @@ import * as production from './pages/production.js';
 import { records as prodRecords, orders as prodOrders, serials as prodSerials } from './pages/production-lists.js';
 import * as prodCalendar from './pages/production-calendar.js';
 import * as teamUpload from './pages/team-upload.js';
+import * as servicePage from './pages/service.js';
 
 const root = document.getElementById('root');
 const state = { user: null, meta: null, cleanup: null };
@@ -37,7 +37,10 @@ const ROUTES = {
   '/production/calendar': { page: prodCalendar, perm: 'production', title: '납기 캘린더' },
   '/production/upload': { page: teamUpload, perm: 'production', edit: 'production', title: '제조내역 업로드', kind: 'manufacturing_excel' },
   '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
-  '/service': { page: placeholder, perm: 'service', title: '서비스팀', team: 'service' },
+  '/service': { page: servicePage, perm: 'service', title: '서비스팀 대시보드' },
+  '/service/reports': { page: servicePage.reports, perm: 'service', title: '출장보고서 목록' },
+  '/service/reports/new': { page: servicePage.reportForm, perm: 'service', edit: 'service', title: '출장보고서 직접 입력' },
+  '/service/regions': { page: servicePage.regions, perm: 'service', edit: 'service', title: '요청처 지역 관리' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
   '/prices/input': { page: partPriceInput, perm: PART_PERMS, edit: 'service', title: '단가 직접 입력' },
@@ -74,7 +77,12 @@ const MENU = [
     ['/production/upload', '제조내역 업로드'],
     ['/production/uploads', '업로드 이력'],
   ] },
-  { type: 'item', href: '/service', label: '서비스', icon: 'service', perm: 'service', soon: true },
+  { type: 'group', label: '서비스', icon: 'service', perm: 'service', items: [
+    ['/service', '서비스 대시보드'],
+    ['/service/reports', '출장보고서 목록'],
+    ['/service/reports/new', '출장보고서 직접 입력'],
+    ['/service/regions', '요청처 지역 관리'],
+  ] },
   // 하위 항목 세 번째 값: 그 항목만의 권한 (없으면 묶음 권한)
   { type: 'group', label: '단가', icon: 'price', perm: PART_PERMS, items: [
     ['/prices/parts', '부품별 비교'],
