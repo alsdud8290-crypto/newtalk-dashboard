@@ -7,11 +7,17 @@ import * as upload from './pages/upload.js';
 import * as exportPage from './pages/export.js';
 import * as users from './pages/users.js';
 import * as placeholder from './pages/placeholder.js';
+import * as partPrices from './pages/part-prices.js';
+import * as partPriceInput from './pages/part-price-input.js';
+import * as pricing from './pages/pricing.js';
 
 const root = document.getElementById('root');
 const state = { user: null, meta: null, cleanup: null };
 
-// perm: 필요한 권한. 메뉴·라우트 모두 이 표 기준으로 노출/차단
+// perm: 필요한 권한(배열이면 그중 하나). 메뉴·라우트 모두 이 표 기준으로 노출/차단
+// 단가: 부품 단가는 서비스팀 + 경영지원·관리자, 제품 단가·원가(대외비)는 경영지원·관리자만 (서버 API도 같은 기준)
+const PART_PERMS = ['service', 'mgmt', 'admin'];
+const PRICING_PERMS = ['mgmt', 'admin'];
 const ROUTES = {
   '/dashboard': { page: dashboard, perm: 'mgmt', title: '경영 현황' },
   '/input/monthly': { page: monthly, perm: 'mgmt', title: '월별 실적·목표' },
@@ -21,6 +27,10 @@ const ROUTES = {
   '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
   '/production': { page: placeholder, perm: 'production', title: '생산팀', team: 'production' },
   '/service': { page: placeholder, perm: 'service', title: '서비스팀', team: 'service' },
+  '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
+  '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
+  '/prices/input': { page: partPriceInput, perm: PART_PERMS, title: '단가 직접 입력' },
+  '/prices/products': { page: pricing, perm: PRICING_PERMS, title: '제품 단가·원가' },
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
 };
 
@@ -30,6 +40,7 @@ const ICONS = {
   mgmt: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h2M14 10h2M8 14h2M14 14h2M8 18h2M14 18h2"/>',
   production: '<path d="M2 20h20M4 20V10l5 3V10l5 3V6l6 4v10"/>',
   service: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+  price: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -45,10 +56,17 @@ const MENU = [
   ] },
   { type: 'item', href: '/production', label: '생산', icon: 'production', perm: 'production', soon: true },
   { type: 'item', href: '/service', label: '서비스', icon: 'service', perm: 'service', soon: true },
+  // 하위 항목 세 번째 값: 그 항목만의 권한 (없으면 묶음 권한)
+  { type: 'group', label: '단가', icon: 'price', perm: PART_PERMS, items: [
+    ['/prices/parts', '부품별 비교'],
+    ['/prices/companies', '출장지별 비교'],
+    ['/prices/input', '단가 직접 입력'],
+    ['/prices/products', '제품 단가·원가', PRICING_PERMS],
+  ] },
   { type: 'item', href: '/admin/users', label: '관리자', icon: 'admin', perm: 'admin' },
 ];
 
-const can = (perm) => !!state.user?.perms?.[perm];
+const can = (perm) => [].concat(perm).some((p) => !!state.user?.perms?.[p]);
 const firstAllowed = () => Object.keys(ROUTES).find((r) => can(ROUTES[r].perm));
 
 const BRAND = `
@@ -93,7 +111,7 @@ function renderShell() {
     ? `<a class="nav-item" href="#${m.href}" data-href="${m.href}">${icon(m.icon)}<span>${esc(m.label)}</span>${soon(m)}</a>`
     : `<div class="nav-group">
         <div class="nav-group-title">${icon(m.icon)}<span>${esc(m.label)}</span></div>
-        ${m.items.map(([href, label]) => `<a class="nav-sub" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
+        ${m.items.filter(([, , perm]) => !perm || can(perm)).map(([href, label]) => `<a class="nav-sub" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
       </div>`)).join('');
   root.innerHTML = `
     <div class="app">
@@ -169,7 +187,7 @@ async function route() {
   }
   main.innerHTML = '<div class="empty">불러오는 중…</div>';
   try {
-    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, reloadMeta });
+    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, reloadMeta });
   } catch (err) {
     main.innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
   }

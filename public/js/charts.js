@@ -221,3 +221,51 @@ export function compareBar(canvas, labels, series, { line, selected } = {}) {
     },
   });
 }
+
+// 기준값 대비 차이율(%) 가로 막대 — 0(뉴토크 기준값)에서 오른쪽은 비쌈(주황), 왼쪽은 쌈(남색)
+// items: [{ key, label, rate, detail }]. 색만으로 읽지 않게 툴팁·표에 +/− 기호와 숫자를 함께 보여 준다
+export const DIFF_ABOVE = SERIES[1];
+export const DIFF_BELOW = SERIES[0];
+export function diffBar(canvas, items, { selected = null, onSelect } = {}) {
+  const colorOf = (i) => (i.rate > 0 ? DIFF_ABOVE : i.rate < 0 ? DIFF_BELOW : OTHER);
+  const bound = Math.ceil(Math.max(5, ...items.map((i) => Math.abs(i.rate))) / 5) * 5;
+  const signed = (r) => `${r > 0 ? '+' : ''}${r}%`;
+  canvas.parentElement.style.height = `${Math.max(items.length, 1) * 30 + 40}px`;
+  return new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: items.map((i) => i.label),
+      datasets: [{
+        data: items.map((i) => i.rate),
+        backgroundColor: items.map((i) => (selected === null || selected === i.key ? colorOf(i) : `${colorOf(i)}55`)),
+        borderRadius: 4, borderSkipped: false, barThickness: 14,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      animation: false,
+      onClick: (_, els) => { if (els.length && onSelect) onSelect(items[els[0].index].key); },
+      onHover: (e, els) => { e.native.target.style.cursor = els.length && onSelect ? 'pointer' : 'default'; },
+      scales: {
+        x: {
+          min: -bound, max: bound,
+          ticks: { callback: (v) => signed(v) },
+          // 0% 선(= 뉴토크 기준값)만 진하게
+          grid: { color: (c) => (c.tick.value === 0 ? INK.secondary : INK.grid), lineWidth: (c) => (c.tick.value === 0 ? 1.5 : 1) },
+          border: { display: false },
+        },
+        y: { grid: { display: false }, border: { display: false } },
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const i = items[c.dataIndex];
+              return `기준값 대비 ${signed(i.rate)}${i.detail ? ` · ${i.detail}` : ''}`;
+            },
+          },
+        },
+      },
+    },
+  });
+}

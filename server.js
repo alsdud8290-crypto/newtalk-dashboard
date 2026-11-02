@@ -8,6 +8,7 @@ import {
 import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
 import * as ledger from './lib/ledger.js';
+import * as pricing from './lib/pricing.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -90,9 +91,10 @@ app.use(wrap(async (req, _res, next) => {
 }));
 
 const requireLogin = (req, _res, next) => next(req.user ? undefined : new HttpError(401, '로그인이 필요합니다.'));
+// perm: 권한 이름 하나 또는 배열(그중 하나라도 있으면 통과)
 const requirePerm = (perm) => (req, _res, next) => {
   if (!req.user) return next(new HttpError(401, '로그인이 필요합니다.'));
-  if (!req.user[`perm_${perm}`]) return next(new HttpError(403, '이 메뉴에 대한 권한이 없습니다.'));
+  if (![].concat(perm).some((p) => req.user[`perm_${p}`])) return next(new HttpError(403, '이 메뉴에 대한 권한이 없습니다.'));
   next();
 };
 
@@ -527,6 +529,47 @@ app.post('/api/admin/sample-users', requirePerm('admin'), wrap(async (_req, res)
 app.get('/api/admin/default-perms', requirePerm('admin'), (_req, res) => res.json(Object.fromEntries(DEPTS.map((d) => [d, defaultPerms(d)]))));
 app.use('/api/admin', admin);
 
+// ---------- 단가 (ITB2026에서 옮겨 옴) ----------
+// 제품 단가·원가: 원가·마진·커미션은 대외비 → 경영지원팀(대표 포함)·관리자만. 캐시에 남지 않게 no-store
+const PRICING_PERMS = ['mgmt', 'admin'];
+const prices = express.Router();
+prices.use(requirePerm(PRICING_PERMS));
+prices.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+prices.get('/products', wrap(async (req, res) => {
+  await pricing.logAccess(req.user.id);
+  res.json(await pricing.productPrices(req.query));
+}));
+prices.get('/commission', wrap(async (req, res) => {
+  await pricing.logAccess(req.user.id);
+  res.json(await pricing.commissionCalc(req.query));
+}));
+prices.get('/settings', wrap(async (_req, res) => res.json(await pricing.settingHistory())));
+prices.post('/settings', wrap(async (req, res) => res.json(await pricing.saveSetting(req.body || {}, req.user.id))));
+prices.get('/access-log', wrap(async (_req, res) => res.json(await pricing.accessLog())));
+app.use('/api/pricing', prices);
+
+// 부품 단가(뉴토크 기준값·출장지별 단가): 서비스팀 + 경영지원팀(대표 포함)·관리자
+const PART_PERMS = ['service', 'mgmt', 'admin'];
+const parts = express.Router();
+parts.use(requirePerm(PART_PERMS));
+const xlsxSend = (res, name, buf) => {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(buf);
+};
+const q = (v) => String(v || '').trim();
+parts.get('/catalog', wrap(async (req, res) => res.json(await pricing.catalogTable(q(req.query.q), q(req.query.category)))));
+parts.get('/catalog/choices', wrap(async (_req, res) => res.json(await pricing.catalogChoices())));
+parts.get('/catalog/export', wrap(async (req, res) => xlsxSend(res, `부품단가_${nowStr().slice(0, 10)}.xlsx`, await pricing.catalogWorkbook(q(req.query.q), q(req.query.category)))));
+parts.get('/companies', wrap(async (req, res) => res.json(await pricing.companyComparison(q(req.query.category)))));
+parts.get('/companies/export', wrap(async (req, res) => xlsxSend(res, `출장지별단가비교_${nowStr().slice(0, 10)}.xlsx`, await pricing.companyWorkbook(q(req.query.category)))));
+parts.get('/catalog/:id', wrap(async (req, res) => res.json(await pricing.catalogDetail(req.params.id))));
+parts.patch('/catalog/:id', wrap(async (req, res) => res.json(await pricing.setCatalogItem(req.params.id, req.body || {}))));
+parts.put('/standard', wrap(async (req, res) => res.json(await pricing.setStandard(req.body || {}))));
+parts.post('/prices', wrap(async (req, res) => res.status(201).json(await pricing.addPartPrice(req.body || {}, req.user.id))));
+parts.delete('/prices/:id', wrap(async (req, res) => { await pricing.deletePartPrice(req.params.id); res.json({ ok: true }); }));
+app.use('/api/parts', parts);
+
 // ---------- 에러 처리 ----------
 app.use('/api', (_req, _res, next) => next(new HttpError(404, '없는 API입니다.')));
 app.use((err, _req, res, _next) => {
@@ -535,4 +578,5 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: status >= 500 ? '서버 오류가 발생했습니다.' : err.message });
 });
 
+await pricing.seedVirtualPricing();
 app.listen(PORT, () => console.log(`뉴토크 코리아 경영 대시보드: http://localhost:${PORT}`));

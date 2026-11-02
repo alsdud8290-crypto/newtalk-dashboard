@@ -137,7 +137,11 @@ export const exportButtons = (prefix) => `
 // 엑셀 내려받기 (모두 회사 "경영지원 관리" 양식 서식) — params: { kind, year, q, open }
 export async function downloadCompany(params = {}) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString();
-  const res = await fetch(`/api/mgmt/xlsx?${qs}`, { credentials: 'same-origin' });
+  return downloadFrom(`/api/mgmt/xlsx?${qs}`);
+}
+// 서버가 만든 파일 내려받기 (파일 이름은 서버 Content-Disposition 기준)
+export async function downloadFrom(url) {
+  const res = await fetch(url, { credentials: 'same-origin' });
   if (!res.ok) return toast((await res.json().catch(() => null))?.error || '내려받기에 실패했습니다.', true);
   const cd = res.headers.get('Content-Disposition') || '';
   saveBlob(decodeURIComponent((cd.match(/filename\*=UTF-8''([^;]+)/) || [])[1] || 'export.xlsx'), await res.blob());
