@@ -335,6 +335,13 @@ mgmt.post('/import', wrap(async (req, res) => {
   res.json({ ok: true, counts: { targets: t.length, monthly: m.length, sales: s.length, receivables: rv.length } });
 }));
 
+// 업로드 이력에 남기기 (저장이 끝난 뒤 화면에서 한 번 부름): 파일 이름·읽은 행·저장 건수·요약
+mgmt.post('/upload-log', wrap(async (req, res) => {
+  const b = req.body || {};
+  await uploads.logSaved('mgmt_excel', b.file_name, req.user, { rowCount: b.row_count, savedCount: b.saved_count, note: b.note });
+  res.status(201).json({ ok: true });
+}));
+
 // ---------- 경영지원팀: 데이터 내보내기 (엑셀·CSV 다운로드용) ----------
 // period: 'YYYY'(연간) · 'YYYY-Qn'(분기) · 'YYYY-MM'(월) · 없음(전체). 예전 year= 도 받는다. 미수금은 청구일 기준
 const p2 = (n) => String(n).padStart(2, '0');

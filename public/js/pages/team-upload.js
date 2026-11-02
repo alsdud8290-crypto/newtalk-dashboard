@@ -201,19 +201,28 @@ export async function render(main, ctx) {
 }
 
 // ---------------- 업로드 이력 ----------------
+const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: '서비스팀' };
+// 이력 화면 오른쪽 위: 그 팀의 업로드 화면으로 가는 버튼
+const UPLOAD_LINKS = {
+  mgmt: [['#/upload', '경영 데이터 업로드']],
+  production: [['#/production/upload', '제조내역 업로드'], ['#/production/upload-orders', '수주서 업로드']],
+  service: [['#/service/upload', '출장보고서 업로드'], ['#/prices/upload', '견적서 업로드']],
+};
 export const history = {
   async render(main, ctx) {
     const d = await api(`/api/uploads?team=${ctx.team}`);
     const chip = { saved: 'done', extracted: 'warning', saving: 'warning', cancelled: 'pending' };
     const icon = { saved: '✓', extracted: '…', saving: '…', cancelled: '✕' };
+    const hasNote = d.results.some((b) => b.note);
     main.innerHTML = `
-      <div class="page-head"><div><h2>업로드 이력</h2><div class="sub">${ctx.team === 'production' ? '생산팀' : '서비스팀'} 파일 업로드 기록 최근 ${d.limit}건 · 원본 파일은 보관하지 않아 내려받기는 없습니다</div></div></div>
+      <div class="page-head"><div><h2>업로드 이력</h2><div class="sub">${TEAM_NAMES[ctx.team]} 파일 업로드 기록 최근 ${d.limit}건 · 원본 파일은 보관하지 않아 내려받기는 없습니다</div></div>
+        <div class="filters">${(UPLOAD_LINKS[ctx.team] || []).map(([href, label]) => `<a class="btn" href="${href}">${label}</a>`).join('')}</div></div>
       <div class="card">${!d.results.length ? '<div class="empty">업로드 기록이 없습니다.</div>' : `
         <div class="table-wrap"><table class="tbl">
-          <thead><tr><th>올린 시각</th><th>올린 사람</th><th>종류</th><th>파일 이름</th><th>상태</th><th class="r">추출 행</th><th class="r">저장</th></tr></thead>
+          <thead><tr><th>올린 시각</th><th>올린 사람</th><th>종류</th><th>파일 이름</th><th>상태</th>${hasNote ? '<th>내용</th>' : ''}<th class="r">추출 행</th><th class="r">저장</th></tr></thead>
           <tbody>${d.results.map((b) => `<tr><td>${esc(String(b.created_at).slice(0, 16))}</td><td>${esc(b.uploaded_by)}</td><td>${esc(b.kind_display)}</td>
             <td class="wrap">${esc(b.file_name)}</td><td><span class="status-chip ${chip[b.status] || 'pending'}">${icon[b.status] || ''} ${esc(b.status_display)}</span></td>
-            <td class="r">${b.row_count}</td><td class="r">${b.status === 'saved' ? `${b.saved_count}건` : '-'}</td></tr>`).join('')}</tbody>
+            ${hasNote ? `<td class="wrap muted">${esc(b.note)}</td>` : ''}<td class="r">${b.row_count}</td><td class="r">${b.status === 'saved' ? `${b.saved_count}건` : '-'}</td></tr>`).join('')}</tbody>
         </table></div>`}</div>`;
   },
 };

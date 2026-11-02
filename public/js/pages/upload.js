@@ -191,29 +191,32 @@ export async function render(main, ctx) {
   let fullBackup = false; // '경영지원 관리 (전체)' 내려받기 파일인지
   let backupRange = null; // 기간(월·분기·연간) 내려받기 파일이면 { from, to, label }
 
+  // 화면 배치는 팀 업로드(제조내역·수주서·출장보고서·견적서)와 같게: 머리 + 파일 고르기 카드(끌어 놓기·안내) → 확인 카드
   main.innerHTML = `
     <div class="page-head">
-      <div><h2>엑셀 업로드 · 과거 데이터 이관</h2><div class="sub">기존 엑셀(수금 등) 파일을 올려 한 번에 반영합니다. 저장 전 미리보기로 확인할 수 있습니다.</div></div>
+      <div><h2>경영 데이터 엑셀 업로드</h2><div class="sub">목표·월별실적·매출내역·미수금 엑셀, "경영지원 관리" 양식 파일을 한 번에 반영합니다.</div></div>
       <div class="filters">
-        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 경영지원 관리 양식 엑셀 한 파일로">⬇ 현재 데이터 전체 (경영지원 관리 양식)</button>
-        <button class="btn" id="u-tpl">⬇ 업로드 양식 다운로드</button>
+        <button class="btn" id="u-tpl">⬇ 업로드 양식</button>
+        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 경영지원 관리 양식 엑셀 한 파일로">⬇ 현재 데이터 전체</button>
+        <a class="btn" href="#/mgmt/uploads">업로드 이력</a>
       </div>
     </div>
-    <div class="steps">
-      <div class="card step"><b>1</b>양식을 내려받거나, 기존 엑셀 파일을 그대로 사용합니다. 열 이름이 비슷하면 자동 인식합니다.</div>
-      <div class="card step"><b>2</b>파일을 끌어다 놓거나 선택합니다. 시트별로 종류(목표/월별실적/매출내역/미수금)를 판별합니다.</div>
-      <div class="card step"><b>3</b>미리보기를 확인하고 [저장]을 누릅니다. 오류가 하나라도 있으면 아무것도 저장되지 않습니다.</div>
-    </div>
-    <div class="card" style="margin-bottom:16px">
-      <div class="filters" style="margin-bottom:12px">
+    <div class="card" style="margin-bottom:16px" id="u-picker">
+      <label class="dropzone" id="u-drop">
+        <input type="file" id="u-file" accept=".xlsx,.xls,.csv" hidden multiple>
+        <div style="font-size:15px;font-weight:600;margin-bottom:4px">파일을 여기에 끌어다 놓거나 클릭해서 선택</div>
+        <div class="hint">.xlsx / .xls / .csv · 여러 파일 동시 선택 가능 · 올리면 바로 저장되지 않고 확인 화면이 나옵니다</div>
+      </label>
+      <div class="filters" style="margin-top:12px">
         <label class="hint" style="color:var(--text-2)">월별실적 시트에 연도 열이 없을 때 기준 연도</label>
         <select class="input" id="u-year">${Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - 6 + i).map((y) => `<option ${y === new Date().getFullYear() ? 'selected' : ''}>${y}</option>`).join('')}</select>
       </div>
-      <label class="dropzone" id="u-drop">
-        <input type="file" id="u-file" accept=".xlsx,.xls,.csv" hidden multiple>
-        <div style="font-size:15px;font-weight:600;margin-bottom:4px">엑셀 파일을 여기에 끌어다 놓거나 클릭해서 선택</div>
-        <div class="hint">.xlsx / .xls / .csv · 여러 파일 동시 선택 가능</div>
-      </label>
+      <ul class="hint tips">
+        <li>[⬇ 업로드 양식]을 내려받아 채우거나, 쓰던 엑셀을 그대로 올려도 됩니다. 열 이름이 비슷하면(거래처/업체명, 공급가액/금액 등) 자동으로 알아봅니다.</li>
+        <li>시트마다 종류(연간목표·월별실적·매출내역·미수금·경영지원 관리 양식)를 판별해 확인 화면에 보여 줍니다.</li>
+        <li>이 화면에서 내려받은 기간 파일(월·분기·연간)을 다시 올리면 그 기간의 매출내역·미수금만 교체합니다.</li>
+        <li>오류가 하나라도 있으면 아무것도 저장되지 않습니다. 저장한 기록은 [업로드 이력]에서 볼 수 있습니다.</li>
+      </ul>
     </div>
     <div id="u-preview"></div>`;
 
@@ -226,7 +229,9 @@ export async function render(main, ctx) {
   drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); handle(e.dataTransfer.files); });
   input.addEventListener('change', () => handle(input.files));
 
+  let fileNames = [];
   async function handle(files) {
+    fileNames = [...files].map((f) => f.name);
     parsed = [];
     ledgerSheets = [];
     fullBackup = false;
@@ -268,6 +273,7 @@ export async function render(main, ctx) {
 
   function preview() {
     const el = main.querySelector('#u-preview');
+    main.querySelector('#u-picker').hidden = !!(parsed.length || ledgerSheets.length);
     if (!parsed.length && !ledgerSheets.length) { el.innerHTML = ''; return; }
     const usable = parsed.filter((p) => p.type && p.rows.length);
     const hasSales = usable.some((p) => p.type === 'sales');
@@ -286,13 +292,17 @@ export async function render(main, ctx) {
       </tbody></table></div>` : '';
     el.innerHTML = `
       <div class="card" style="margin-bottom:16px">
-        <div class="card-head"><h3>미리보기</h3>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="card-head"><div class="ttl"><h3>${esc(fileNames.join(', '))}</h3><span class="hint" id="u-state">경영 데이터 엑셀 · 확인 대기</span></div>
+          <div class="filters">
+            <button class="btn" id="u-new">다른 파일 올리기</button>
             ${hasSales ? `<span class="check-row"><label><input type="checkbox" id="u-rs"> ${backupRange ? `${esc(backupRange.label)}의 기존 매출 내역을 지우고 교체` : '해당 연도의 기존 매출 내역을 지우고 교체'}</label></span>` : ''}
             ${hasRecv ? `<span class="check-row"><label><input type="checkbox" id="u-rr"> ${backupRange ? `${esc(backupRange.label)}에 청구된 기존 미수금을 지우고 교체` : '기존 미수금 전체를 지우고 교체'}</label></span>` : ''}
             <button class="btn primary" id="u-save" ${usable.length || ledgerSheets.length ? '' : 'disabled'}>저장</button>
           </div>
         </div>
+        <div class="kv-row" style="margin-bottom:12px"><span>읽은 시트 <b>${usable.length + ledgerSheets.length}</b></span>
+          <span>읽은 행 <b>${usable.reduce((a, p) => a + p.rows.length, 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0)}</b></span>
+          ${parsed.length - usable.length ? `<span class="muted">건너뛴 시트 ${parsed.length - usable.length}</span>` : ''}</div>
         ${fullBackup
           ? '<div class="notice" style="margin-bottom:12px"><b>전체 데이터 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적은 파일에 있는 연도·월만 덮어씁니다.</div>'
           : backupRange
@@ -306,6 +316,7 @@ export async function render(main, ctx) {
     el.querySelectorAll('[data-lm]').forEach((inp) => inp.addEventListener('change', () => { ledgerSheets[Number(inp.dataset.lm)].month = inp.value; }));
     ledgerSheets.forEach((sh) => { if (!sh.month) sh.month = thisMonth; });
     el.querySelector('#u-save')?.addEventListener('click', save);
+    el.querySelector('#u-new').addEventListener('click', () => { parsed = []; ledgerSheets = []; preview(); });
   }
 
   function sheetPreview(p) {
@@ -362,7 +373,17 @@ export async function render(main, ctx) {
       const companyNote = !ledgerSheets.length ? ''
         : costMonths.length ? ` + 경영지원 관리 지출 반영 ${costMonths.length}개월(${costMonths.join(', ')})`
           : recvFromCompany === null && !body.monthly.length ? ' · 경영지원 관리 시트에 반영할 내용(거래처·금액)이 없었습니다' : '';
-      result.innerHTML = `<div class="notice">저장 완료 — 연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건${companyNote}, 매출내역 ${r.counts.sales}건, 미수금 ${recvCount}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
+      const note = `연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건${companyNote}, 매출내역 ${r.counts.sales}건, 미수금 ${recvCount}`;
+      // 이력에는 0건인 항목을 빼고 짧게
+      const logNote = [['연간목표', r.counts.targets], ['월별실적', r.counts.monthly], ['매출내역', r.counts.sales]].filter(([, n]) => n).map(([l, n]) => `${l} ${n}건`)
+        .concat(recvFromCompany !== null || r.counts.receivables ? [`미수금 ${recvCount}`] : [], costMonths.length ? [`지출 반영 ${costMonths.length}개월`] : []).join(', ') || '반영할 내용 없음';
+      result.innerHTML = `<div class="notice">저장 완료 — ${note}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
+      main.querySelector('#u-state').textContent = '경영 데이터 엑셀 · 저장 완료';
+      // 업로드 이력에 남김 (실패해도 저장은 끝났으므로 안내만)
+      const savedCount = r.counts.targets + r.counts.monthly + r.counts.sales + (recvFromCompany ?? r.counts.receivables) + costMonths.length;
+      const rowCount = parsed.reduce((a, p) => a + (p.type ? p.rows.length : 0), 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0);
+      api('/api/mgmt/upload-log', { method: 'POST', body: { file_name: fileNames.join(', '), row_count: rowCount, saved_count: savedCount, note: logNote } })
+        .catch(() => toast('저장은 됐지만 업로드 이력을 남기지 못했습니다.', true));
       toast('업로드한 데이터를 저장했습니다.');
       await ctx.reloadMeta();
     } catch (err) {
