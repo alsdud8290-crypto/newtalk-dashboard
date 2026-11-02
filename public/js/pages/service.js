@@ -4,7 +4,8 @@
 import { api, esc, toast, today } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip } from '../korea-map.js';
-import { periodQS, periodSelector, dash } from './prod-common.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom } from '../exporter.js';
+import { prodPeriod, periodQS, periodSelector, dlPeriod, dash } from './prod-common.js';
 
 const PAID_COLORS = { 유상: SERIES[0], 무상: SERIES[2] };
 const paidColor = (n) => PAID_COLORS[n] || OTHER;
@@ -30,7 +31,7 @@ export async function render(main) {
   main.innerHTML = `
     <div class="page-head">
       <div><h2>서비스팀 대시보드</h2><div class="sub">출장보고서 기준 · 출장 시작일로 기간에 넣음 (여러 날 출장도 1회)</div></div>
-      <div id="sv-period"></div>
+      <div class="filters"><div id="sv-period"></div>${periodDownloadButton('sv-dl')}</div>
     </div>
     <div id="sv-body"><div class="empty">불러오는 중…</div></div>`;
 
@@ -123,6 +124,11 @@ export async function render(main) {
     main.querySelector('#sv-level').addEventListener('click', (e) => { const b = e.target.closest('[data-l]'); if (b && b.dataset.l !== level) { level = b.dataset.l; draw(); } });
   }
 
+  bindPeriodDownload(main, 'sv-dl', {
+    ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
+    hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·출장보고서 목록을 시트별로 담습니다.',
+    onExcel: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}`),
+  });
   await periodSelector(main.querySelector('#sv-period'), load);
   await load();
   return destroy;

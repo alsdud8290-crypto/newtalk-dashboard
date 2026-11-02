@@ -151,15 +151,18 @@ export const downloadFull = (year) => downloadCompany({ kind: 'full', year });
 // ---------- 기간 고르기 (전체·연간·분기·월) ----------
 // 서버 period 형식: '' 전체 · '2026' 연간 · '2026-Q3' 분기 · '2026-09' 월
 const PERIOD_MODES = [['', '전체'], ['year', '연간'], ['quarter', '분기'], ['month', '월']];
-export function periodPickerHtml({ years = [], year, mode = '' } = {}) {
+//   modes: 보여 줄 보기와 순서 (기본 전부), month·quarter: 처음 고를 월·분기 (기본 이번 달)
+export function periodPickerHtml({ years = [], year, mode = '', modes, month, quarter } = {}) {
   const now = new Date();
+  const m0 = month || now.getMonth() + 1;
+  const q0 = quarter || Math.ceil(m0 / 3);
   const y0 = year || now.getFullYear();
   const ys = [...new Set([...years, y0, now.getFullYear()])].sort((a, b) => b - a);
   return `<div class="pp" data-mode="${mode}">
-    <div class="seg">${PERIOD_MODES.map(([v, l]) => `<button type="button" data-m="${v}" class="${v === mode ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="seg">${(modes ? modes.map((m) => PERIOD_MODES.find(([v]) => v === m)) : PERIOD_MODES).map(([v, l]) => `<button type="button" data-m="${v}" class="${v === mode ? 'on' : ''}">${l}</button>`).join('')}</div>
     <select class="input" data-pp="y" ${mode ? '' : 'hidden'}>${ys.map((v) => `<option value="${v}" ${v === y0 ? 'selected' : ''}>${v}년</option>`).join('')}</select>
-    <select class="input" data-pp="q" ${mode === 'quarter' ? '' : 'hidden'}>${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === Math.ceil((now.getMonth() + 1) / 3) ? 'selected' : ''}>${q}분기 (${q * 3 - 2}~${q * 3}월)</option>`).join('')}</select>
-    <select class="input" data-pp="m" ${mode === 'month' ? '' : 'hidden'}>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i === now.getMonth() ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>
+    <select class="input" data-pp="q" ${mode === 'quarter' ? '' : 'hidden'}>${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === q0 ? 'selected' : ''}>${q}분기 (${q * 3 - 2}~${q * 3}월)</option>`).join('')}</select>
+    <select class="input" data-pp="m" ${mode === 'month' ? '' : 'hidden'}>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === m0 ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>
   </div>`;
 }
 // el: .pp 요소 → { period(), label() }. 바뀔 때 onChange 호출
@@ -185,7 +188,7 @@ export function bindPeriodPicker(el, onChange = () => {}) {
 }
 
 // 페이지 머리의 [⬇ 내려받기] → 기간 고르고 엑셀/CSV
-//   opts: { years, year, mode, hint, currentYear(), onExcel(period, label), onCsv(period, label) }
+//   opts: { years, year, mode, modes, month, quarter, hint, currentYear(), onExcel(period, label), onCsv(period, label) } — onCsv가 없으면 엑셀만
 export const periodDownloadButton = (id) => `<span class="dl-menu pd" id="${id}"><button type="button" class="btn" data-pd-open aria-haspopup="true">⬇ 내려받기</button></span>`;
 export function bindPeriodDownload(root, id, opts) {
   const wrap = root.querySelector(`#${id}`);
@@ -195,7 +198,7 @@ export function bindPeriodDownload(root, id, opts) {
   pop.innerHTML = `<div class="pd-title">기간을 골라 내려받기</div>
     ${periodPickerHtml(opts)}
     ${opts.hint ? `<div class="pd-hint">${opts.hint}</div>` : ''}
-    <div class="pd-actions"><button type="button" class="btn brand" data-pd="xlsx">⬇ 엑셀</button><button type="button" class="btn" data-pd="csv">⬇ CSV</button></div>`;
+    <div class="pd-actions"><button type="button" class="btn brand" data-pd="xlsx">⬇ 엑셀</button>${opts.onCsv ? '<button type="button" class="btn" data-pd="csv">⬇ CSV</button>' : ''}</div>`;
   wrap.appendChild(pop);
   const picker = bindPeriodPicker(pop.querySelector('.pp'));
   const close = (e) => { if (!wrap.contains(e.target)) { pop.hidden = true; document.removeEventListener('click', close); } };
@@ -206,6 +209,13 @@ export function bindPeriodDownload(root, id, opts) {
     if (pop.hidden && cy && ySel.value !== String(cy)) {
       if (![...ySel.options].some((o) => o.value === String(cy))) ySel.add(new Option(`${cy}년`, cy));
       ySel.value = String(cy);
+    }
+    // 화면에서 고른 보기·월·분기도 그대로 (opts.current() → { mode, month, quarter })
+    const cur = pop.hidden && opts.current?.();
+    if (cur) {
+      if (cur.month) pop.querySelector('[data-pp="m"]').value = String(cur.month);
+      if (cur.quarter) pop.querySelector('[data-pp="q"]').value = String(cur.quarter);
+      pop.querySelector(`[data-m="${cur.mode}"]`)?.click();
     }
     pop.hidden = !pop.hidden;
     if (!pop.hidden) setTimeout(() => document.addEventListener('click', close));

@@ -19,6 +19,9 @@ export function periodQS(p = prodPeriod) {
   return qs.toString();
 }
 
+// 내려받기 창의 처음 값 = 화면에서 고른 기간
+export const dlPeriod = () => ({ year: prodPeriod.year, mode: prodPeriod.kind, month: prodPeriod.month, quarter: prodPeriod.quarter });
+
 // 연도 목록: 데이터가 있는 가장 이른 연도(없으면 3년 전) ~ 내년
 let earliest = null;
 async function yearList() {

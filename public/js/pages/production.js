@@ -1,7 +1,8 @@
 // 생산팀 대시보드 (ITB2026에서 옮겨 옴): 납기 임박(오늘 기준) + 생산 실적(목표 대비·비교) + 납기·출고 + 판매 실적
 import { api, esc, toast } from '../core.js';
 import { gauge, prodBars, donut, SERIES, OTHER, INDUSTRY_COLORS, ORDER_LINE, hideTooltip } from '../charts.js';
-import { prodPeriod, setProdPeriod, periodQS, periodSelector, statusChip, dDayChip, orderLabel, qty, dash } from './prod-common.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom } from '../exporter.js';
+import { prodPeriod, setProdPeriod, periodQS, periodSelector, dlPeriod, statusChip, dDayChip, orderLabel, qty, dash } from './prod-common.js';
 
 const store = (key, def) => { try { return { ...def, ...JSON.parse(localStorage.getItem(key) || '{}') }; } catch { return { ...def }; } };
 const save = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* 무시 */ } };
@@ -21,7 +22,7 @@ export async function render(main, ctx) {
     <div id="pd-soon"></div>
     <div class="page-head">
       <div><h2>생산팀 대시보드</h2><div class="sub">생산 실적(제조년월 기준) · 납기·출고 · 판매 실적(수주서 제품 수량)</div></div>
-      <div id="pd-period"></div>
+      <div class="filters"><div id="pd-period"></div>${periodDownloadButton('pd-dl')}</div>
     </div>
     <div id="pd-body"><div class="empty">불러오는 중…</div></div>
     <div id="pd-sales"></div>`;
@@ -285,6 +286,12 @@ export async function render(main, ctx) {
   }
   const toggleFilter = (k, v) => { filters[k] = filters[k] === v ? '' : v; loadSales(); };
 
+  // 엑셀: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
+  bindPeriodDownload(main, 'pd-dl', {
+    ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
+    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 시트별로 담습니다. 미출고는 오늘 기준입니다.',
+    onExcel: (period) => downloadFrom(`/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`),
+  });
   await periodSelector(main.querySelector('#pd-period'), load);
   await load();
   return () => { destroy(); const el = main.querySelector('#pd-sales'); el?.__chart?.destroy(); };

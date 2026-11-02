@@ -616,6 +616,12 @@ prod.get('/orders/export', wrap(async (req, res) => {
   const { label, rows } = await production.orderExportRows(req.query);
   xlsxSend(res, `수주내역_${label}.xlsx`, await pricing.simpleWorkbook([['수주내역', production.ORDER_COLUMNS.map(([h, k, w]) => [h, k, w, k === 'item.quantity' ? 'won' : undefined]), rows]]));
 }));
+// 대시보드 엑셀: ?period=2026 | 2026-Q3 | 2026-09 (+ 판매 실적 기준 date_basis·customer_basis·product_group)
+const dashExport = (mod, prefix) => wrap(async (req, res) => {
+  const { label, sheets } = await mod.dashboardSheets({ ...req.query, ...production.periodQuery(req.query.period) });
+  xlsxSend(res, `${prefix}_${label.replace(/\s+/g, '')}_${nowStr().slice(0, 10)}.xlsx`, await pricing.simpleWorkbook(sheets));
+});
+prod.get('/dashboard/export', dashExport(production, '생산팀대시보드'));
 prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await production.earliestYear() })));
 app.use('/api/production', prod);
 
@@ -625,6 +631,7 @@ const svc = express.Router();
 svc.use(requirePerm('service'));
 svc.use(requireEditFor('service'));
 svc.get('/dashboard', wrap(async (req, res) => res.json(await service.dashboard(req.query))));
+svc.get('/dashboard/export', dashExport(service, '서비스팀대시보드'));
 svc.get('/reports', wrap(async (req, res) => res.json(await service.reportList(req.query))));
 svc.post('/reports', wrap(async (req, res) => res.status(201).json(await service.createReport(req.body || {}, req.user.id))));
 svc.get('/reports/:id', wrap(async (req, res) => res.json(await service.reportDetail(req.params.id))));
