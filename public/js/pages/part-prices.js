@@ -51,7 +51,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div class="ttl"><h3>파트넘버별 기준값 · 출장지 단가</h3><span class="hint" id="pp-count"></span></div>
-        <button class="btn sm" id="pp-xlsx">⬇ 엑셀</button>
+        <button class="btn sm" id="pp-xlsx">⬇ 엑셀</button><button class="btn sm" id="pp-csv">⬇ CSV</button>
       </div>
       <div class="filters" style="margin-bottom:12px">
         <form id="pp-search" class="filters"><input class="input" name="q" placeholder="파트넘버(예: 05-A-01, 0501) 또는 품명" style="width:280px"><button class="btn">검색</button></form>
@@ -113,6 +113,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
     const n = data.items.length;
     $('#pp-count').textContent = `${n}개 부품 · 줄을 누르면 출장지별 단가`;
     $('#pp-xlsx').disabled = !n;
+    $('#pp-csv').disabled = !n;
     $('#pp-table').innerHTML = !n
       ? `<div class="empty">${filters.q || filters.category ? '조건에 맞는 부품이 없습니다.' : '단가표가 없습니다. 관리자가 단가표를 넣어야 합니다.'}</div>`
       : `<div class="table-wrap" style="max-height:60vh"><table class="tbl click">
@@ -200,7 +201,9 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
   $('#pp-cat').addEventListener('change', (e) => { filters.category = e.target.value; load(); });
   $('#pp-clear').addEventListener('click', () => { filters.q = ''; filters.category = ''; $('#pp-search').q.value = ''; $('#pp-cat').value = ''; load(); });
   $('#pp-table').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-id]'); if (tr) open(Number(tr.dataset.id)); });
-  $('#pp-xlsx').addEventListener('click', () => downloadFrom(`/api/parts/catalog/export?q=${encodeURIComponent(filters.q)}&category=${encodeURIComponent(filters.category)}`));
+  const catalogUrl = () => `/api/parts/catalog/export?q=${encodeURIComponent(filters.q)}&category=${encodeURIComponent(filters.category)}`;
+  $('#pp-xlsx').addEventListener('click', () => downloadFrom(catalogUrl()));
+  $('#pp-csv').addEventListener('click', () => downloadFrom(`${catalogUrl()}&format=csv`));
 
   await load();
   if (openId && !(detail && detail.id === Number(openId))) {
@@ -222,7 +225,7 @@ async function renderCompanies(body, charts, destroyCharts) {
         <div class="ttl"><h3>출장지별 단가 비교</h3><span class="hint">뉴토크 기준값 대비 평균 차이율</span></div>
         <div class="filters">
           <select class="input" id="pc-cat"><option value="">모든 분류</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
-          <button class="btn sm" id="pc-xlsx">⬇ 엑셀</button>
+          <button class="btn sm" id="pc-xlsx">⬇ 엑셀</button><button class="btn sm" id="pc-csv" title="업체 요약·부품별 차이 CSV 두 개를 ZIP 하나로">⬇ CSV</button>
         </div>
       </div>
       <div id="pc-main"></div>
@@ -239,6 +242,7 @@ async function renderCompanies(body, charts, destroyCharts) {
   function draw() {
     destroyCharts();
     $('#pc-xlsx').disabled = !data.companies.length;
+    $('#pc-csv').disabled = !data.companies.length;
     $('#pc-main').innerHTML = !data.companies.length
       ? '<div class="empty">비교할 출장지 단가가 없습니다. 단가 직접 입력으로 쌓입니다.</div>'
       : `${data.low_count ? `<div class="notice warn">${lowBadge('')} 뉴토크 기준값보다 <b>${data.low_alert_rate}% 이상 낮은</b> 견적이 <b>${data.low_count}건</b> 있습니다. 업체를 눌러 어떤 부품인지 확인하세요. (기준 ${data.low_alert_rate}%는 임시값 — 부품별 비교의 "기본값 수정"에서 바꿀 수 있음)</div>` : ''}
@@ -288,6 +292,7 @@ async function renderCompanies(body, charts, destroyCharts) {
 
   $('#pc-cat').addEventListener('change', (e) => { category = e.target.value; load(); });
   $('#pc-xlsx').addEventListener('click', () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}`));
+  $('#pc-csv').addEventListener('click', () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}&format=csv`));
   $('#pc-main').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-c]'); if (tr) toggle(tr.dataset.c); });
   // 출장지별 비교에서 파트넘버를 누르면 부품별 비교로 가서 그 부품을 연다
   $('#pc-detail').addEventListener('click', (e) => { const a = e.target.closest('[data-open]'); if (a) sessionStorage.setItem('openPart', a.dataset.open); });

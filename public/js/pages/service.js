@@ -149,8 +149,9 @@ export async function render(main) {
 
   bindPeriodDownload(main, 'sv-dl', {
     ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
-    hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·출장보고서 목록을 시트별로 담습니다.',
+    hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·출장보고서 목록을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로).',
     onExcel: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}`),
+    onCsv: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}&format=csv`),
   });
   await periodSelector(main.querySelector('#sv-period'), load);
   await load();

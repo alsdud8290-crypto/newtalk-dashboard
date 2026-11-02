@@ -580,17 +580,25 @@ app.use('/api/pricing', prices);
 const parts = express.Router();
 parts.use(requirePerm('service'));
 parts.use(requireEditFor('service'));
-const xlsxSend = (res, name, buf) => {
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+const fileSend = (res, name, type, buf) => {
+  res.setHeader('Content-Type', type);
+  res.setHeader('Content-Disposition', `attachment; filename="export"; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.send(buf);
+};
+// 표 내려받기: 기본 엑셀(.xlsx), ?format=csv 이면 CSV (시트가 여러 개면 CSV들을 ZIP 하나로). base = 확장자 뺀 파일 이름
+const sheetsSend = async (req, res, base, sheets) => {
+  if (req.query.format === 'csv') {
+    if (sheets.length === 1) return fileSend(res, `${base}.csv`, 'text/csv; charset=utf-8', pricing.sheetCsv(sheets[0]));
+    return fileSend(res, `${base}_CSV.zip`, 'application/zip', await pricing.csvZip(sheets));
+  }
+  fileSend(res, `${base}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', await pricing.simpleWorkbook(sheets));
 };
 const q = (v) => String(v || '').trim();
 parts.get('/catalog', wrap(async (req, res) => res.json(await pricing.catalogTable(q(req.query.q), q(req.query.category)))));
 parts.get('/catalog/choices', wrap(async (_req, res) => res.json(await pricing.catalogChoices())));
-parts.get('/catalog/export', wrap(async (req, res) => xlsxSend(res, `부품단가_${nowStr().slice(0, 10)}.xlsx`, await pricing.catalogWorkbook(q(req.query.q), q(req.query.category)))));
+parts.get('/catalog/export', wrap(async (req, res) => sheetsSend(req, res, `부품단가_${nowStr().slice(0, 10)}`, await pricing.catalogSheets(q(req.query.q), q(req.query.category)))));
 parts.get('/companies', wrap(async (req, res) => res.json(await pricing.companyComparison(q(req.query.category)))));
-parts.get('/companies/export', wrap(async (req, res) => xlsxSend(res, `출장지별단가비교_${nowStr().slice(0, 10)}.xlsx`, await pricing.companyWorkbook(q(req.query.category)))));
+parts.get('/companies/export', wrap(async (req, res) => sheetsSend(req, res, `출장지별단가비교_${nowStr().slice(0, 10)}`, await pricing.companySheets(q(req.query.category)))));
 parts.get('/catalog/:id', wrap(async (req, res) => res.json(await pricing.catalogDetail(req.params.id))));
 parts.patch('/catalog/:id', wrap(async (req, res) => res.json(await pricing.setCatalogItem(req.params.id, req.body || {}))));
 parts.put('/standard', wrap(async (req, res) => res.json(await pricing.setStandard(req.body || {}))));
@@ -616,17 +624,17 @@ prod.get('/due-soon', wrap(async (_req, res) => res.json(await production.dueSoo
 prod.get('/records', wrap(async (req, res) => res.json(await production.recordList(req.query))));
 prod.get('/records/export', wrap(async (req, res) => {
   const { label, rows } = await production.recordExportRows(req.query);
-  xlsxSend(res, `제조내역_${label}.xlsx`, await pricing.simpleWorkbook([['제조내역', production.RECORD_COLUMNS, rows]]));
+  await sheetsSend(req, res, `제조내역_${label}`, [['제조내역', production.RECORD_COLUMNS, rows]]);
 }));
 prod.get('/orders', wrap(async (req, res) => res.json(await production.orderList(req.query))));
 prod.get('/orders/export', wrap(async (req, res) => {
   const { label, rows } = await production.orderExportRows(req.query);
-  xlsxSend(res, `수주내역_${label}.xlsx`, await pricing.simpleWorkbook([['수주내역', production.ORDER_COLUMNS.map(([h, k, w]) => [h, k, w, k === 'item.quantity' ? 'won' : undefined]), rows]]));
+  await sheetsSend(req, res, `수주내역_${label}`, [['수주내역', production.ORDER_COLUMNS.map(([h, k, w]) => [h, k, w, k === 'item.quantity' ? 'won' : undefined]), rows]]);
 }));
-// 대시보드 엑셀: ?period=2026 | 2026-Q3 | 2026-09 (+ 판매 실적 기준 date_basis·customer_basis·product_group)
+// 대시보드 엑셀(또는 ?format=csv → 시트별 CSV ZIP): ?period=2026 | 2026-Q3 | 2026-09 (+ 판매 실적 기준 date_basis·customer_basis·product_group)
 const dashExport = (mod, prefix) => wrap(async (req, res) => {
   const { label, sheets } = await mod.dashboardSheets({ ...req.query, ...production.periodQuery(req.query.period) });
-  xlsxSend(res, `${prefix}_${label.replace(/\s+/g, '')}_${nowStr().slice(0, 10)}.xlsx`, await pricing.simpleWorkbook(sheets));
+  await sheetsSend(req, res, `${prefix}_${label.replace(/\s+/g, '')}_${nowStr().slice(0, 10)}`, sheets);
 });
 prod.get('/dashboard/export', dashExport(production, '생산팀대시보드'));
 prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await production.earliestYear() })));

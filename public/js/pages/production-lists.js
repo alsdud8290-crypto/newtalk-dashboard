@@ -31,7 +31,7 @@ export const records = {
             <select class="input" name="model"><option value="">모든 모델</option></select>
             <button class="btn">검색</button>
           </form>
-          <div class="filters"><div class="seg" id="rl-shipped"></div><button class="btn sm" id="rl-xlsx">⬇ 엑셀</button></div>
+          <div class="filters"><div class="seg" id="rl-shipped"></div><button class="btn sm" id="rl-xlsx">⬇ 엑셀</button><button class="btn sm" id="rl-csv">⬇ CSV</button></div>
         </div>
         <div id="rl-table"><div class="empty">불러오는 중…</div></div>
       </div>`;
@@ -48,6 +48,7 @@ export const records = {
       $('#rl-shipped').innerHTML = [['', `전체 ${d.counts.total}`], ['yes', `✓ 출고 ${d.counts.shipped}`], ['no', `○ 출고 전 ${d.counts.not_shipped}`]]
         .map(([v, l]) => `<button type="button" data-s="${v}" class="${f.shipped === v ? 'on' : ''}">${l}</button>`).join('');
       $('#rl-xlsx').disabled = !d.total;
+      $('#rl-csv').disabled = !d.total;
       $('#rl-table').innerHTML = !d.results.length ? '<div class="empty">조건에 맞는 제조내역이 없습니다.</div>' : `
         <div class="table-wrap"><table class="tbl click">
           <thead><tr><th>일련번호</th><th>모델</th><th>제조년월</th><th>검사일자</th><th>거래처</th><th>사업명</th><th>PO번호</th><th>납기일</th><th>출고</th></tr></thead>
@@ -67,6 +68,7 @@ export const records = {
       if (tr) { sessionStorage.setItem('serialQuery', tr.dataset.serial); location.hash = '#/production/serials'; }
     });
     $('#rl-xlsx').addEventListener('click', () => downloadFrom(`/api/production/records/export?${qs()}`));
+    $('#rl-csv').addEventListener('click', () => downloadFrom(`/api/production/records/export?${qs()}&format=csv`));
     await periodSelector($('#rl-period'), () => { f.page = 1; load(); });
     await load();
   },
@@ -89,7 +91,7 @@ export const orders = {
             <select class="input" name="industry"><option value="">모든 산업 분야</option></select>
             <button class="btn">검색</button>
           </form>
-          <div class="filters"><span class="hint" id="ol-count"></span><button class="btn sm" id="ol-xlsx">⬇ 엑셀</button></div>
+          <div class="filters"><span class="hint" id="ol-count"></span><button class="btn sm" id="ol-xlsx">⬇ 엑셀</button><button class="btn sm" id="ol-csv">⬇ CSV</button></div>
         </div>
         <div id="ol-table"><div class="empty">불러오는 중…</div></div>
       </div>`;
@@ -105,6 +107,7 @@ export const orders = {
     function draw() {
       $('#ol-count').textContent = `수주서 ${d.counts.total}건 · 수량 ${qty(d.counts.quantity)}`;
       $('#ol-xlsx').disabled = !d.total;
+      $('#ol-csv').disabled = !d.total;
       $('#ol-table').innerHTML = !d.results.length ? '<div class="empty">조건에 맞는 수주서가 없습니다. 수주서 PDF 업로드는 다음 단계에서 옮겨 옵니다.</div>' : `
         <div class="table-wrap"><table class="tbl click">
           <thead><tr><th>납기일</th><th>판매번호</th><th>수주서류</th><th>수주일</th><th>산업 분야</th><th>판매처</th><th>사업명</th><th>제품 × 수량</th><th class="r">수량</th></tr></thead>
@@ -129,6 +132,7 @@ export const orders = {
       if (tr) { open = open === tr.dataset.o ? '' : tr.dataset.o; draw(); }
     });
     $('#ol-xlsx').addEventListener('click', () => downloadFrom(`/api/production/orders/export?${qs()}`));
+    $('#ol-csv').addEventListener('click', () => downloadFrom(`/api/production/orders/export?${qs()}&format=csv`));
     await periodSelector($('#ol-period'), () => { f.page = 1; load(); });
     await load();
   },

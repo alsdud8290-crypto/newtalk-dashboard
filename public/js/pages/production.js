@@ -347,11 +347,13 @@ export async function render(main, ctx) {
   }
   bindCardMenus(main, { getData: cardData, prefix: '생산팀', label: () => data?.period.label || '' });
 
-  // 엑셀: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
+  const dashUrl = (period) => `/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`;
+  // 엑셀·CSV: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
   bindPeriodDownload(main, 'pd-dl', {
     ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
-    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 시트별로 담습니다. 미출고는 오늘 기준입니다.',
-    onExcel: (period) => downloadFrom(`/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`),
+    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로). 미출고는 오늘 기준입니다.',
+    onExcel: (period) => downloadFrom(dashUrl(period)),
+    onCsv: (period) => downloadFrom(`${dashUrl(period)}&format=csv`),
   });
   await periodSelector(main.querySelector('#pd-period'), load);
   await load();
