@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, nowStr } from './lib/db.js';
 import {
-  DEPTS, PERMS, defaultPerms, hashPassword, verifyPassword, newToken, parseCookies, publicUser,
+  DEPTS, PERMS, ROLES, defaultPerms, normalizePerms, hashPassword, verifyPassword, newToken, parseCookies, publicUser,
 } from './lib/auth.js';
 import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
@@ -97,6 +97,13 @@ const requirePerm = (perm) => (req, _res, next) => {
   if (![].concat(perm).some((p) => req.user[`perm_${p}`])) return next(new HttpError(403, '이 메뉴에 대한 권한이 없습니다.'));
   next();
 };
+// 조회(GET)는 열람 권한으로 통과시키고, 입력·수정·삭제는 그 팀 수정 권한(팀장·경영지원팀·대표·관리자)이 있어야 한다
+// except: 수정 권한 없이도 허용할 POST 경로 (예: AI 코멘트 다시 만들기 — 데이터를 바꾸지 않음)
+const requireEditFor = (team, except = []) => (req, _res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || except.includes(req.path)) return next();
+  if (!req.user?.[`perm_edit_${team}`]) return next(new HttpError(403, '수정 권한이 없습니다. 팀장 또는 관리자에게 요청해 주세요.'));
+  next();
+};
 
 // 로그인 실패 제한: 같은 IP·아이디로 10분 안에 5번 틀리면 10분간 잠금
 const LOCK_MS = 10 * 60 * 1000;
@@ -162,6 +169,7 @@ app.get('/api/meta', requireLogin, wrap(async (req, res) => {
 // ---------- 경영지원팀: 대시보드 ----------
 const mgmt = express.Router();
 mgmt.use(requirePerm('mgmt'));
+mgmt.use(requireEditFor('mgmt', ['/ai-comment']));
 
 // 조회 조건 정리 (형식 오류는 400). AI 코멘트는 "단위:시작월:종료월"을 키로 기간별 저장
 function parsePeriod(q) {
@@ -461,9 +469,10 @@ admin.post('/users', wrap(async (req, res) => {
   if (!DEPTS.includes(b.dept)) throw new HttpError(400, '부서를 선택해 주세요.');
   if (String(b.password || '').length < 8) throw new HttpError(400, '초기 비밀번호는 8자 이상이어야 합니다.');
   if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) throw new HttpError(400, '이미 사용 중인 아이디입니다.');
-  const p = { ...defaultPerms(b.dept), ...(b.perms || {}) };
-  const r = await db.run(`INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, username, str(b.name), b.dept, hashPassword(b.password), ...PERMS.map((k) => (p[k] ? 1 : 0)));
+  const role = ROLES.includes(b.role) ? b.role : '팀원';
+  const p = normalizePerms({ ...defaultPerms(b.dept, role), ...(b.perms || {}) });
+  const r = await db.run(`INSERT INTO users (username, name, dept, role, password_hash, ${PERMS.map((k) => `perm_${k}`).join(', ')})
+                        VALUES (?, ?, ?, ?, ?, ${PERMS.map(() => '?').join(', ')})`, username, str(b.name), b.dept, role, hashPassword(b.password), ...PERMS.map((k) => p[k]));
   res.json(publicUser(await db.get('SELECT * FROM users WHERE id = ?', r.lastInsertRowid)));
 }));
 
@@ -476,12 +485,17 @@ admin.put('/users/:id', wrap(async (req, res) => {
   const dept = b.dept !== undefined ? b.dept : u.dept;
   if (!name) throw new HttpError(400, '이름을 입력해 주세요.');
   if (!DEPTS.includes(dept)) throw new HttpError(400, '부서를 선택해 주세요.');
-  const perms = Object.fromEntries(PERMS.map((k) => [k, b.perms && k in b.perms ? (b.perms[k] ? 1 : 0) : u[`perm_${k}`]]));
+  const role = ROLES.includes(b.role) ? b.role : (u.role || '팀원');
+  const before = Object.fromEntries(PERMS.map((k) => [k, b.perms && k in b.perms ? (b.perms[k] ? 1 : 0) : u[`perm_${k}`]]));
+  // 열람을 끄면 그 팀 수정도 끈다 (수정을 켜면 열람은 normalizePerms가 켠다)
+  for (const t of ['mgmt', 'production', 'service']) if (b.perms && t in b.perms && !b.perms[t]) before[`edit_${t}`] = 0;
+  const perms = normalizePerms(before);
   const active = b.active !== undefined ? (b.active ? 1 : 0) : u.active;
   if ((!perms.admin || !active) && u.perm_admin && u.active && (await adminCount(id)) === 0) {
     throw new HttpError(400, '마지막 관리자 권한은 해제할 수 없습니다.');
   }
-  await db.run(`UPDATE users SET name=?, dept=?, perm_mgmt=?, perm_production=?, perm_service=?, perm_admin=?, active=? WHERE id=?`, name, dept, perms.mgmt, perms.production, perms.service, perms.admin, active, id);
+  await db.run(`UPDATE users SET name=?, dept=?, role=?, ${PERMS.map((k) => `perm_${k}=?`).join(', ')}, active=? WHERE id=?`,
+    name, dept, role, ...PERMS.map((k) => perms[k]), active, id);
   if (!active) await db.run('DELETE FROM sessions WHERE user_id = ?', id);
   res.json(publicUser(await db.get('SELECT * FROM users WHERE id = ?', id)));
 }));
@@ -497,43 +511,45 @@ admin.post('/users/:id/reset-password', wrap(async (req, res) => {
 }));
 
 // 화면 확인용 샘플 직원 (이름에 '(샘플)'). 이미 있는 아이디는 건너뜀
+// [아이디, 이름, 부서, 직책, 기본값에서 바꿀 권한, 사용 여부]
 const SAMPLE_STAFF = [
-  ['s.ceo', '박성훈(샘플)', '대표'],
-  ['s.mgmt1', '김지현(샘플)', '경영지원팀'],
-  ['s.mgmt2', '이수민(샘플)', '경영지원팀', { admin: 0 }],
-  ['s.mgmt3', '정다은(샘플)', '경영지원팀', { admin: 0 }],
-  ['s.dual1', '최민호(샘플)', '생산·서비스 겸직'],
-  ['s.dual2', '강태윤(샘플)', '생산·서비스 겸직'],
-  ['s.dual3', '윤서진(샘플)', '생산·서비스 겸직'],
-  ['s.dual4', '한동욱(샘플)', '생산·서비스 겸직'],
-  ['s.dual5', '조은비(샘플)', '생산·서비스 겸직'],
-  ['s.prod1', '오재현(샘플)', '생산팀'],
-  ['s.prod2', '서현우(샘플)', '생산팀', { mgmt: 1 }],
-  ['s.svc1', '임채원(샘플)', '서비스팀'],
-  ['s.svc2', '송유진(샘플)', '서비스팀', null, false],
+  ['s.ceo', '박성훈(샘플)', '대표', '팀장'],
+  ['s.mgmt1', '김지현(샘플)', '경영지원팀', '팀장'],
+  ['s.mgmt2', '이수민(샘플)', '경영지원팀', '팀원', { admin: 0 }],
+  ['s.mgmt3', '정다은(샘플)', '경영지원팀', '팀원', { admin: 0 }],
+  ['s.dual1', '최민호(샘플)', '생산·서비스 겸직', '팀장'],
+  ['s.dual2', '강태윤(샘플)', '생산·서비스 겸직', '팀원'],
+  ['s.dual3', '윤서진(샘플)', '생산·서비스 겸직', '팀원'],
+  ['s.dual4', '한동욱(샘플)', '생산·서비스 겸직', '팀원'],
+  ['s.dual5', '조은비(샘플)', '생산·서비스 겸직', '팀원'],
+  ['s.prod1', '오재현(샘플)', '생산팀', '팀장'],
+  ['s.prod2', '서현우(샘플)', '생산팀', '팀원', { mgmt: 1 }],
+  ['s.svc1', '임채원(샘플)', '서비스팀', '팀장'],
+  ['s.svc2', '송유진(샘플)', '서비스팀', '팀원', null, false],
 ];
 const SAMPLE_PASSWORD = 'sample1234!';
 app.post('/api/admin/sample-users', requirePerm('admin'), wrap(async (_req, res) => {
   let added = 0;
-  for (const [username, name, dept, extra, active = true] of SAMPLE_STAFF) {
+  for (const [username, name, dept, role, extra, active = true] of SAMPLE_STAFF) {
     if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) continue;
-    const p = { ...defaultPerms(dept), ...(extra || {}) };
-    await db.run(`INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin, active, must_change_pw)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-    username, name, dept, hashPassword(SAMPLE_PASSWORD), ...PERMS.map((k) => (p[k] ? 1 : 0)), active ? 1 : 0);
+    const p = normalizePerms({ ...defaultPerms(dept, role), ...(extra || {}) });
+    await db.run(`INSERT INTO users (username, name, dept, role, password_hash, ${PERMS.map((k) => `perm_${k}`).join(', ')}, active, must_change_pw)
+                  VALUES (?, ?, ?, ?, ?, ${PERMS.map(() => '?').join(', ')}, ?, 1)`,
+    username, name, dept, role, hashPassword(SAMPLE_PASSWORD), ...PERMS.map((k) => p[k]), active ? 1 : 0);
     added += 1;
   }
   res.json({ added, total: SAMPLE_STAFF.length, password: SAMPLE_PASSWORD });
 }));
 
-app.get('/api/admin/default-perms', requirePerm('admin'), (_req, res) => res.json(Object.fromEntries(DEPTS.map((d) => [d, defaultPerms(d)]))));
+// 부서·직책별 기본 권한 { 부서: { 팀원: {...}, 팀장: {...} } }
+app.get('/api/admin/default-perms', requirePerm('admin'), (_req, res) => res.json(Object.fromEntries(DEPTS.map((d) => [d, Object.fromEntries(ROLES.map((r) => [r, defaultPerms(d, r)]))]))));
 app.use('/api/admin', admin);
 
 // ---------- 단가 (ITB2026에서 옮겨 옴) ----------
-// 제품 단가·원가: 원가·마진·커미션은 대외비 → 경영지원팀(대표 포함)·관리자만. 캐시에 남지 않게 no-store
-const PRICING_PERMS = ['mgmt', 'admin'];
+// 제품 단가·원가: 원가·마진·커미션은 대외비 → 경영지원팀 열람 권한(경영지원팀·대표·관리자)만, 기준값 바꾸기는 경영지원 수정 권한. 캐시에 남지 않게 no-store
 const prices = express.Router();
-prices.use(requirePerm(PRICING_PERMS));
+prices.use(requirePerm('mgmt'));
+prices.use(requireEditFor('mgmt'));
 prices.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 prices.get('/products', wrap(async (req, res) => {
   await pricing.logAccess(req.user.id);
@@ -548,10 +564,10 @@ prices.post('/settings', wrap(async (req, res) => res.json(await pricing.saveSet
 prices.get('/access-log', wrap(async (_req, res) => res.json(await pricing.accessLog())));
 app.use('/api/pricing', prices);
 
-// 부품 단가(뉴토크 기준값·출장지별 단가): 서비스팀 + 경영지원팀(대표 포함)·관리자
-const PART_PERMS = ['service', 'mgmt', 'admin'];
+// 부품 단가(뉴토크 기준값·출장지별 단가): 서비스팀 열람 권한으로 조회, 입력·기준값 수정은 서비스팀 수정 권한
 const parts = express.Router();
-parts.use(requirePerm(PART_PERMS));
+parts.use(requirePerm('service'));
+parts.use(requireEditFor('service'));
 const xlsxSend = (res, name, buf) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);

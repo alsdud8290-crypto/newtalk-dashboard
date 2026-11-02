@@ -1,9 +1,10 @@
-import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, today } from '../core.js';
+import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, today, VIEW_ONLY } from '../core.js';
 import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 export async function render(main, ctx) {
   let rows = [];
   let onlyOpen = true;
+  const editable = ctx.canEdit('mgmt');
   let filter = '';
 
   main.innerHTML = `
@@ -13,9 +14,10 @@ export async function render(main, ctx) {
         <div class="seg" id="r-open"><button type="button" data-v="1" class="on">미수 건만</button><button type="button" data-v="0">전체</button></div>
         <input class="input" id="r-filter" placeholder="거래처 검색" style="width:160px">
         ${periodDownloadButton('r-dl')}
-        <button class="btn primary" id="r-add">+ 청구 등록</button>
+        ${editable ? '<button class="btn primary" id="r-add">+ 청구 등록</button>' : ''}
       </div>
     </div>
+    ${editable ? '' : VIEW_ONLY}
     <div class="card"><div class="table-wrap" id="r-table"></div></div>`;
 
   const form = (r) => { r = r || {}; return `
@@ -71,7 +73,7 @@ export async function render(main, ctx) {
           <td class="r num">${comma(r.amount)}</td><td class="r num">${comma(r.collected)}</td>
           <td class="r num"><b>${bal > 0.5 ? comma(bal) : '<span class="status-chip good">✓ 완료</span>'}</b></td>
           <td>${esc(r.collected_date)}</td><td>${esc(r.note)}</td>
-          <td class="r"><button class="btn sm" data-edit="${r.id}">수정</button> <button class="btn sm danger" data-del="${r.id}">삭제</button></td></tr>`;
+          <td class="r">${editable ? `<button class="btn sm" data-edit="${r.id}">수정</button> <button class="btn sm danger" data-del="${r.id}">삭제</button>` : ''}</td></tr>`;
         }).join('')}</tbody>
         <tfoot><tr><td colspan="4">${list.length}건 합계</td><td class="r num">${comma(sum('amount'))}</td><td class="r num">${comma(sum('collected'))}</td>
           <td class="r num">${comma(sum('amount') - sum('collected'))}</td><td colspan="3">잔액 ${won(sum('amount') - sum('collected'))}</td></tr></tfoot>
@@ -90,7 +92,7 @@ export async function render(main, ctx) {
     load();
   });
   main.querySelector('#r-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
-  main.querySelector('#r-add').addEventListener('click', () => edit(null));
+  main.querySelector('#r-add')?.addEventListener('click', () => edit(null));
   // 내려받기: 기간을 고르면 그 기간에 청구된 건(미수·수금 완료 모두) + 엑셀은 달마다 월말 기준 미수금 현황
   //           '전체'는 지금 화면처럼(미수 건만/전체) + 이번 달 미수금 현황
   const match = (r) => !filter || r.customer.toLowerCase().includes(filter.toLowerCase());

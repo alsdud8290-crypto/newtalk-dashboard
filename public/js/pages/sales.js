@@ -1,10 +1,11 @@
-import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today } from '../core.js';
+import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today, VIEW_ONLY } from '../core.js';
 import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 export async function render(main, ctx) {
   let year = period.year;
   let rows = [];
   let filter = '';
+  const editable = ctx.canEdit('mgmt');
 
   main.innerHTML = `
     <div class="page-head">
@@ -13,9 +14,10 @@ export async function render(main, ctx) {
         <select class="input" id="s-year">${yearOptions(year, ctx.meta.years)}</select>
         <input class="input" id="s-filter" placeholder="판매처·시리즈 검색" style="width:180px">
         ${periodDownloadButton('s-dl')}
-        <button class="btn primary" id="s-add">+ 매출 등록</button>
+        ${editable ? '<button class="btn primary" id="s-add">+ 매출 등록</button>' : ''}
       </div>
     </div>
+    ${editable ? '' : VIEW_ONLY}
     <div class="card"><div class="table-wrap" id="s-table"></div></div>`;
 
   const form = (r) => { r = r || {}; return `
@@ -60,7 +62,7 @@ export async function render(main, ctx) {
         <tbody>${list.map((r) => `<tr>
           <td>${esc(r.date)}</td><td>${esc(r.customer)}</td><td>${esc(r.industry)}</td><td>${esc(r.series)}</td><td>${esc(r.sales_type)}</td>
           <td class="r num">${comma(r.amount)}</td><td>${esc(r.note)}</td>
-          <td class="r"><button class="btn sm" data-edit="${r.id}">수정</button> <button class="btn sm danger" data-del="${r.id}">삭제</button></td></tr>`).join('')}</tbody>
+          <td class="r">${editable ? `<button class="btn sm" data-edit="${r.id}">수정</button> <button class="btn sm danger" data-del="${r.id}">삭제</button>` : ''}</td></tr>`).join('')}</tbody>
         <tfoot><tr><td colspan="5">${list.length}건 합계</td><td class="r num">${comma(total)}</td><td colspan="2">${won(total)}</td></tr></tfoot>
       </table>` : `<div class="empty">${year}년 매출 내역이 없습니다. [+ 매출 등록] 또는 <a href="#/upload">엑셀 업로드</a>로 입력해 주세요.</div>`;
   }
@@ -72,7 +74,7 @@ export async function render(main, ctx) {
 
   main.querySelector('#s-year').addEventListener('change', (e) => { year = Number(e.target.value); setPeriod({ year }); load(); });
   main.querySelector('#s-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
-  main.querySelector('#s-add').addEventListener('click', () => edit(null));
+  main.querySelector('#s-add')?.addEventListener('click', () => edit(null));
   // 내려받기: 기간(월·분기·연간·전체)을 골라서, 검색어가 있으면 검색 결과만
   const match = (r) => !filter || `${r.customer} ${r.series} ${r.note}`.toLowerCase().includes(filter.toLowerCase());
   bindPeriodDownload(main, 's-dl', {

@@ -2,7 +2,7 @@
 //  부품별 비교: 뉴토크 기준값(단가표 기준단가 × (1 − 할인율) + 추가단가) + 출장지(업체)별 평균·최저·최고·최고−최저
 //              줄을 누르면 아래에 출장지별 단가와 기준값 대비 차이
 //  출장지별 비교: 업체마다 기준값 대비 평균 차이율 막대 → 누르면 그 업체의 부품별 차이
-import { api, esc, toast } from '../core.js';
+import { api, esc, toast, VIEW_ONLY } from '../core.js';
 import { diffBar, DIFF_ABOVE, DIFF_BELOW, hideTooltip } from '../charts.js';
 import { downloadFrom } from '../exporter.js';
 
@@ -18,29 +18,31 @@ const legend = `<div class="diff-legend">
 
 export async function render(main, ctx) {
   const tab = ctx.tab === 'companies' ? 'companies' : 'parts';
+  const editable = ctx.canEdit('service');
   const charts = [];
   const destroyCharts = () => { while (charts.length) charts.pop().destroy(); hideTooltip(); };
 
   main.innerHTML = `
     <div class="page-head">
       <div><h2>교체부품 단가</h2><div class="sub">파트넘버별 뉴토크 기준값과 출장지(업체)별 단가를 비교합니다.</div></div>
-      <div class="filters"><a class="btn" href="#/prices/input">단가 직접 입력</a></div>
+      ${editable ? '<div class="filters"><a class="btn" href="#/prices/input">단가 직접 입력</a></div>' : ''}
     </div>
     <div class="tabs">
       <a href="#/prices/parts" class="${tab === 'parts' ? 'active' : ''}">부품별 비교</a>
       <a href="#/prices/companies" class="${tab === 'companies' ? 'active' : ''}">출장지별 비교</a>
     </div>
+    ${editable ? '' : VIEW_ONLY}
     <div id="pp-body"></div>`;
   const body = main.querySelector('#pp-body');
 
   if (tab === 'companies') await renderCompanies(body, charts, destroyCharts);
-  else await renderParts(body, charts, destroyCharts, sessionStorage.getItem('openPart'));
+  else await renderParts(body, charts, destroyCharts, sessionStorage.getItem('openPart'), editable);
   sessionStorage.removeItem('openPart');
   return destroyCharts;
 }
 
 // ---------------- 부품별 비교 ----------------
-async function renderParts(body, charts, destroyCharts, openId) {
+async function renderParts(body, charts, destroyCharts, openId, editable) {
   const filters = { q: '', category: '' };
   let data = null;
   let detail = null;
@@ -81,8 +83,8 @@ async function renderParts(body, charts, destroyCharts, openId) {
       <span class="muted">· 전체 기본값: ${settingText(s.default_discount_rate, s.default_extra_price)}</span>
       ${data.list_price_date ? `<span class="muted">· 단가표 기준일 ${esc(data.list_price_date)}</span>` : ''}
       <span class="muted">· 크게 낮음: 기준값보다 ${s.low_alert_rate}% 이상 낮은 견적 (임시 기준)</span>
-      <button class="btn sm" id="pp-std-edit">기본값 수정</button>`;
-    $('#pp-std-edit').addEventListener('click', editStandard);
+      ${editable ? '<button class="btn sm" id="pp-std-edit">기본값 수정</button>' : ''}`;
+    $('#pp-std-edit')?.addEventListener('click', editStandard);
   }
 
   function editStandard() {
@@ -146,13 +148,13 @@ async function renderParts(body, charts, destroyCharts, openId) {
           <span>${settingText(d.discount_rate, d.extra_price)} <span class="muted">${d.custom ? '(이 부품 별도)' : '(전체 기본값)'}</span></span>
           <span>뉴토크 기준값 <b>${wonText(d.standard_price)}</b></span>
         </div>
-        <form id="pp-item" class="filters" style="margin:12px 0">
+        ${editable ? `<form id="pp-item" class="filters" style="margin:12px 0">
           <span class="muted">이 부품만 따로:</span>
           <label>할인율 <input class="input" name="discount_rate" type="number" min="0" max="100" step="0.01" placeholder="기본값" value="${d.custom ? d.discount_rate : ''}" style="width:90px"> %</label>
           <label>추가단가 <input class="input" name="extra_price" type="number" step="1" placeholder="기본값" value="${d.custom ? d.extra_price : ''}" style="width:120px"> 원</label>
           <button class="btn primary sm">저장</button>
           ${d.custom ? '<button type="button" class="btn sm" id="pp-item-reset">전체 기본값으로</button>' : ''}
-        </form>
+        </form>` : '<div style="margin-bottom:12px"></div>'}
         ${d.revisions.length ? `<details class="hint" style="margin-bottom:12px"><summary>단가표 개정 이력 ${d.revisions.length}건</summary>
           <table class="tbl" style="width:auto;margin-top:6px"><thead><tr><th>단가표 기준일</th><th class="r">기준단가</th><th class="r">뉴토크 기준값</th></tr></thead>
           <tbody>${d.revisions.map((r) => `<tr><td>${esc(r.effective_date)}</td><td class="r">${wonText(r.list_price)}</td><td class="r">${wonText(r.standard_price)}</td></tr>`).join('')}</tbody></table></details>` : ''}
@@ -178,7 +180,7 @@ async function renderParts(body, charts, destroyCharts, openId) {
           흐린 줄은 같은 업체의 이전 단가(또는 적용 예정)라 평균·최저·최고 계산에서 빠집니다.</p>
       </div>`;
     if (bars.length) charts.push(diffBar(el.querySelector('#pp-bars'), bars));
-    el.querySelector('#pp-item').addEventListener('submit', (e) => { e.preventDefault(); saveItem(new FormData(e.target)); });
+    el.querySelector('#pp-item')?.addEventListener('submit', (e) => { e.preventDefault(); saveItem(new FormData(e.target)); });
     el.querySelector('#pp-item-reset')?.addEventListener('click', () => saveItem(null));
   }
 

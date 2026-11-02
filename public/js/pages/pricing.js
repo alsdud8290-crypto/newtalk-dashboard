@@ -9,7 +9,8 @@ const wonText = (v) => (v === null || v === undefined ? '-' : `${Math.round(v).t
 const num = (v) => Number(v).toLocaleString('ko-KR');
 const signedChange = (v) => (v > 0 ? `▲ ${num(v)}` : v < 0 ? `▼ ${num(-v)}` : '–');
 
-export async function render(main) {
+export async function render(main, ctx) {
+  const editable = ctx.canEdit('mgmt');
   const sim = { exchange_rate: '', margin: '', option: '', base: 'assembly' };
   let data = null;
   let history = null;
@@ -39,7 +40,7 @@ export async function render(main) {
     return `
       <div class="card" style="margin-bottom:16px" id="pr-setting">
         <div class="card-head"><div class="ttl"><h3>가격 계산 기준값</h3><span class="hint">${esc(s.effective_date)} 적용</span></div>
-          <button class="btn sm" id="pr-edit">기준값 바꾸기</button></div>
+          ${editable ? '<button class="btn sm" id="pr-edit">기준값 바꾸기</button>' : ''}</div>
         <div class="kv-row">
           <span>환율 <b>${num(s.exchange_rate)}원/USD</b></span>
           <span>통관 배수 <b>× ${s.customs_factor}</b></span>
@@ -158,7 +159,7 @@ export async function render(main) {
   function draw() {
     body.innerHTML = settingCard() + simCard() + tableCard() + commissionCard() + logCard(logs);
     const $ = (s) => body.querySelector(s);
-    $('#pr-edit').addEventListener('click', openSettingForm);
+    $('#pr-edit')?.addEventListener('click', openSettingForm);
     $('#pr-reset')?.addEventListener('click', () => { Object.assign(sim, { exchange_rate: '', margin: '', option: '', base: 'assembly' }); refresh(); });
     $('#sim-rate').addEventListener('input', (e) => { sim.exchange_rate = e.target.value; clearTimeout(timer); timer = setTimeout(refresh, 400); });
     $('#sim-margin').addEventListener('change', (e) => { sim.margin = e.target.value; refresh(); });

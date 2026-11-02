@@ -1,4 +1,4 @@
-import { api, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions } from '../core.js';
+import { api, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions, VIEW_ONLY } from '../core.js';
 import { datasetSheet, downloadCsv, downloadCompany, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 export const FIELDS = [
@@ -17,6 +17,7 @@ const TYPE_FIELD = { 제품: 'product_sales', 상품: 'goods_sales', 용역: 'se
 export async function render(main, ctx) {
   let year = period.year;
   let dirty = false;
+  const editable = ctx.canEdit('mgmt');
 
   main.innerHTML = `
     <div class="page-head">
@@ -43,6 +44,12 @@ export async function render(main, ctx) {
       <div class="table-wrap"><table class="tbl edit" id="m-table"></table></div>
     </div>`;
 
+  // 열람 전용: 입력칸은 읽기만, 저장·채우기 버튼은 숨김
+  if (!editable) {
+    main.querySelector('.page-head').insertAdjacentHTML('afterend', VIEW_ONLY);
+    main.querySelectorAll('#t-form button, #m-fill, #m-save').forEach((b) => { b.hidden = true; });
+    main.querySelector('#t-form input').readOnly = true;
+  }
   const tForm = main.querySelector('#t-form');
   const tInput = tForm.querySelector('input');
   const table = main.querySelector('#m-table');
@@ -95,6 +102,7 @@ export async function render(main, ctx) {
       <tfoot><tr><td class="c">합계</td>${sales.map(() => '<td class="r num"></td>').join('')}<td class="r num s-total"></td>
         ${costs.map(() => '<td class="r num"></td>').join('')}<td class="r num c-total"></td></tr></tfoot>`;
     bindMoneyInputs(table);
+    if (!editable) table.querySelectorAll('input').forEach((el) => { el.readOnly = true; });
     table.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => { dirty = true; }));
     table.querySelectorAll('input').forEach((el) => el.addEventListener('blur', totals));
     totals();

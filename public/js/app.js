@@ -14,22 +14,23 @@ import * as pricing from './pages/pricing.js';
 const root = document.getElementById('root');
 const state = { user: null, meta: null, cleanup: null };
 
-// perm: 필요한 권한(배열이면 그중 하나). 메뉴·라우트 모두 이 표 기준으로 노출/차단
-// 단가: 부품 단가는 서비스팀 + 경영지원·관리자, 제품 단가·원가(대외비)는 경영지원·관리자만 (서버 API도 같은 기준)
-const PART_PERMS = ['service', 'mgmt', 'admin'];
-const PRICING_PERMS = ['mgmt', 'admin'];
+// perm: 필요한 열람 권한(배열이면 그중 하나), edit: 그 화면 자체가 입력용이라 수정 권한이 필요한 팀
+// 메뉴·라우트 모두 이 표 기준으로 노출/차단하고, 서버 API도 같은 기준으로 다시 확인한다
+// 단가: 부품 단가는 서비스팀, 제품 단가·원가(대외비)는 경영지원팀 열람 권한
+const PART_PERMS = 'service';
+const PRICING_PERMS = 'mgmt';
 const ROUTES = {
   '/dashboard': { page: dashboard, perm: 'mgmt', title: '경영 현황' },
   '/input/monthly': { page: monthly, perm: 'mgmt', title: '월별 실적·목표' },
   '/input/sales': { page: sales, perm: 'mgmt', title: '매출 내역' },
   '/input/receivables': { page: receivables, perm: 'mgmt', title: '미수금 관리' },
-  '/upload': { page: upload, perm: 'mgmt', title: '엑셀 업로드' },
+  '/upload': { page: upload, perm: 'mgmt', edit: 'mgmt', title: '엑셀 업로드' },
   '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
   '/production': { page: placeholder, perm: 'production', title: '생산팀', team: 'production' },
   '/service': { page: placeholder, perm: 'service', title: '서비스팀', team: 'service' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
-  '/prices/input': { page: partPriceInput, perm: PART_PERMS, title: '단가 직접 입력' },
+  '/prices/input': { page: partPriceInput, perm: PART_PERMS, edit: 'service', title: '단가 직접 입력' },
   '/prices/products': { page: pricing, perm: PRICING_PERMS, title: '제품 단가·원가' },
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
 };
@@ -67,7 +68,9 @@ const MENU = [
 ];
 
 const can = (perm) => [].concat(perm).some((p) => !!state.user?.perms?.[p]);
-const firstAllowed = () => Object.keys(ROUTES).find((r) => can(ROUTES[r].perm));
+const canEdit = (team) => !!state.user?.perms?.[`edit_${team}`];
+const canOpen = (href) => { const r = ROUTES[href]; return !r || (can(r.perm) && (!r.edit || canEdit(r.edit))); };
+const firstAllowed = () => Object.keys(ROUTES).find(canOpen);
 
 const BRAND = `
   <span class="brand">
@@ -111,7 +114,7 @@ function renderShell() {
     ? `<a class="nav-item" href="#${m.href}" data-href="${m.href}">${icon(m.icon)}<span>${esc(m.label)}</span>${soon(m)}</a>`
     : `<div class="nav-group">
         <div class="nav-group-title">${icon(m.icon)}<span>${esc(m.label)}</span></div>
-        ${m.items.filter(([, , perm]) => !perm || can(perm)).map(([href, label]) => `<a class="nav-sub" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
+        ${m.items.filter(([href, , perm]) => (!perm || can(perm)) && canOpen(href)).map(([href, label]) => `<a class="nav-sub" href="#${href}" data-href="${href}">${esc(label)}</a>`).join('')}
       </div>`)).join('');
   root.innerHTML = `
     <div class="app">
@@ -185,9 +188,13 @@ async function route() {
     main.innerHTML = '<div class="card empty">이 메뉴에 대한 열람 권한이 없습니다. 관리자에게 권한을 요청해 주세요.</div>';
     return;
   }
+  if (r.edit && !canEdit(r.edit)) {
+    main.innerHTML = '<div class="card empty">이 화면은 입력용이라 수정 권한이 필요합니다. 팀장 또는 관리자에게 요청해 주세요.</div>';
+    return;
+  }
   main.innerHTML = '<div class="empty">불러오는 중…</div>';
   try {
-    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, reloadMeta });
+    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, canEdit, reloadMeta });
   } catch (err) {
     main.innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
   }

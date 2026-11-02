@@ -19,8 +19,8 @@ const STAFF = [
   ['multi01', '임시 겸직6', '생산·서비스 겸직'],
 ];
 
-const INSERT = `INSERT INTO users (username, name, dept, password_hash, perm_mgmt, perm_production, perm_service, perm_admin, must_change_pw)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`;
+const INSERT = `INSERT INTO users (username, name, dept, password_hash, ${PERMS.map((k) => `perm_${k}`).join(', ')}, must_change_pw)
+                VALUES (?, ?, ?, ?, ${PERMS.map(() => '?').join(', ')}, 1)`;
 let added = 0;
 for (const [username, name, dept] of STAFF) {
   if (await db.get('SELECT 1 FROM users WHERE username = ?', username)) continue;

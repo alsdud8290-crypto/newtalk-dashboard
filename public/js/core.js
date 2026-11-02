@@ -18,6 +18,9 @@ export async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// 수정 권한이 없는 사람에게 화면 위에 보여 주는 안내
+export const VIEW_ONLY = '<div class="notice">열람 전용입니다. 입력·수정은 팀장 또는 관리자에게 요청해 주세요.</div>';
+
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // 표시용 금액: 1억 이상은 억원, 1만 이상은 만원
