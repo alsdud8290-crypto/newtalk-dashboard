@@ -94,7 +94,7 @@ export async function render(main, ctx) {
   // 화면에 보이는 목록(미수 건만/전체·검색 반영)을 그대로 내려받기
   const shown = () => (filter ? rows.filter((r) => r.customer.toLowerCase().includes(filter.toLowerCase())) : rows);
   const exportName = () => fileSafe(`뉴토크코리아_미수금_${onlyOpen ? '미수건' : '전체'}${filter ? `_${filter}` : ''}_${stamp()}`);
-  // 엑셀: 회사 양식 — 이번 달 외상매출금(거래처별) + 미수금 상세
+  // 엑셀: 회사 양식 — 이번 달 미수금 현황(거래처별) + 미수금 상세
   main.querySelector('#r-xlsx').addEventListener('click', () => downloadCompany({ kind: 'receivables', open: onlyOpen ? '1' : '', q: filter }));
   main.querySelector('#r-csv').addEventListener('click', () => downloadCsv(exportName(), datasetSheet('receivables', [...shown()].reverse())));
   main.querySelector('#r-table').addEventListener('click', async (e) => {

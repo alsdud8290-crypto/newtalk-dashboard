@@ -4,9 +4,9 @@ import { DATASETS, datasetSheet, downloadCsv, downloadCsvZip, downloadCompany, s
 const KEYS = ['targets', 'monthly', 'sales', 'receivables'];
 const DESC = {
   targets: '연도별 목표매출액',
-  monthly: '월별 매출·매입·경비 · 엑셀은 달마다 회사 양식 시트(외상매입금·미지급비용 = 지출 칸)도 함께',
+  monthly: '월별 매출·매입·경비 · 엑셀은 달마다 회사 양식 시트(매입·경비·기타 지출 = 지출 칸)도 함께',
   sales: '판매처별 매출 건',
-  receivables: '청구 건별 청구액·수금액 · 엑셀은 이번 달 회사 양식(외상매출금)도 함께',
+  receivables: '청구 건별 청구액·수금액 · 엑셀은 이번 달 회사 양식(미수금 현황)도 함께',
 };
 const KIND = { targets: 'targets', monthly: 'monthly', sales: 'sales', receivables: 'receivables' };
 
@@ -27,7 +27,7 @@ export async function render(main, ctx) {
       </div>
     </div>
     <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div class="ttl"><h3>한 번에 받기</h3><span class="hint">엑셀 한 파일: 안내 · 달마다 경영지원 관리(외상매출금·외상매입금·미지급비용) · 연간목표 · 월별실적 · 매출내역 · 미수금</span></div></div>
+      <div class="card-head"><div class="ttl"><h3>한 번에 받기</h3><span class="hint">엑셀 한 파일: 안내 · 달마다 경영지원 관리(미수금 현황·매입·경비·기타 지출) · 연간목표 · 월별실적 · 매출내역 · 미수금</span></div></div>
       <div class="filters">
         <button class="btn brand" id="x-all">⬇ 전체 데이터 엑셀 (경영지원 관리 양식)</button>
         <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ 전체 데이터 CSV (ZIP · 파일 4개)</button>

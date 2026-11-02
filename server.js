@@ -340,7 +340,7 @@ mgmt.post('/company/parse', wrap(async (req, res) => {
     throw new HttpError(400, `엑셀 파일을 읽을 수 없습니다: ${e.message}`);
   }
 }));
-// 회사 양식 한 달 반영: 외상매출금 → 미수금 관리, 외상매입금·미지급비용 → 월별실적 지출 칸
+// 회사 양식 한 달 반영: 미수금 현황 → 미수금 관리, 매입·경비·기타 지출 → 월별실적 지출 칸
 mgmt.post('/company/import', wrap(async (req, res) => {
   const b = req.body || {};
   if (!ledger.validMonth(b.month)) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${b.month || '(빈 값)'}`);
@@ -354,7 +354,7 @@ mgmt.post('/company/import', wrap(async (req, res) => {
 // 모든 엑셀 내려받기 (회사 양식 서식)
 //   kind=full      : 안내 + 기준월마다 회사 양식 + 연간목표·월별실적·매출내역·미수금 (year 있으면 그 해만)
 //   kind=monthly   : year 의 기준월 회사 양식 + 연간목표·월별실적
-//   kind=receivables: 이번 달 회사 양식(외상매출금) + 미수금 상세 (open=1 미수 건만, q 검색)
+//   kind=receivables: 이번 달 회사 양식(미수금 현황) + 미수금 상세 (open=1 미수 건만, q 검색)
 //   kind=sales     : 매출내역 (year, q)
 //   kind=targets   : 연간목표
 mgmt.get('/xlsx', wrap(async (req, res) => {

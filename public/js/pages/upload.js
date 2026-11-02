@@ -102,7 +102,7 @@ function parseSheet(name, ws) {
   const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
   const type = detectType(name, aoa.slice(0, 10).flat());
   if (!type) {
-    const company = aoa.slice(0, 5).flat().some((c) => /외상매출금|외상매입금|미지급비용/.test(String(c)));
+    const company = aoa.slice(0, 5).flat().some((c) => /외상매출금|외상매입금|미지급비용|^미수금 ?현황$/.test(String(c).trim()));
     return company
       ? { name, type: null, company: true, rows: [], warnings: [] }
       : { name, type: null, rows: [], warnings: ['시트 종류를 알 수 없어 건너뜁니다.'] };
@@ -266,12 +266,12 @@ export async function render(main, ctx) {
     const hasSales = usable.some((p) => p.type === 'sales');
     const hasRecv = usable.some((p) => p.type === 'receivables');
     const thisMonth = new Date().toISOString().slice(0, 7);
-    const secNames = { ar: '외상매출금', ap: '외상매입금', staff: '미지급비용-직원', vendor: '미지급비용-업체' };
+    const secNames = { ar: '미수금 현황', ap: '매입 지출', staff: '경비 지출', vendor: '기타 지출' };
     const ledgerHtml = ledgerSheets.length ? `
       <div style="margin:16px 0 8px"><b>경영지원 관리 (회사 양식)</b> <span class="badge blue">${ledgerSheets.length}개월</span></div>
       <div class="notice" style="margin-bottom:10px">시트마다 기준월을 확인해 주세요. 저장하면
-        <b>외상매출금 → 미수금 관리</b>(가장 최근 기준월의 내용으로 교체${hasRecv ? ' — 파일에 미수금 상세 시트가 있어 그쪽을 씁니다' : ''}),
-        <b>외상매입금 → 월별 실적 상품·원재료 매입</b>, <b>미지급비용-직원 → 경비</b>, <b>미지급비용-업체 → 광고선전비·접대비·그 외 지출</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
+        <b>미수금 현황(외상매출금) → 미수금 관리</b>(가장 최근 기준월의 내용으로 교체${hasRecv ? ' — 파일에 미수금 상세 시트가 있어 그쪽을 씁니다' : ''}),
+        <b>매입 지출(외상매입금) → 월별 실적 상품·원재료 매입</b>, <b>경비 지출(미지급비용-직원) → 경비</b>, <b>기타 지출(미지급비용-업체) → 광고선전비·접대비·그 외 지출</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th>건수</th></tr></thead><tbody>
       ${ledgerSheets.map((sh, k) => `<tr><td>${esc(sh.file)} › ${esc(sh.sheet)}</td>
         <td><input class="input" type="month" data-lm="${k}" value="${sh.month || thisMonth}" style="width:160px"></td>
@@ -347,7 +347,7 @@ export async function render(main, ctx) {
         if (out.receivables !== null) recvFromCompany = out.receivables;
         if (out.monthly) costMonths.push(sh.month);
       }
-      const recvCount = recvFromCompany !== null ? `${recvFromCompany}건 (외상매출금 ${latest} 기준)` : `${r.counts.receivables}건`;
+      const recvCount = recvFromCompany !== null ? `${recvFromCompany}건 (미수금 현황 ${latest} 기준)` : `${r.counts.receivables}건`;
       const companyNote = !ledgerSheets.length ? ''
         : costMonths.length ? ` + 경영지원 관리 지출 반영 ${costMonths.length}개월(${costMonths.join(', ')})`
           : recvFromCompany === null && !body.monthly.length ? ' · 경영지원 관리 시트에 반영할 내용(거래처·금액)이 없었습니다' : '';
