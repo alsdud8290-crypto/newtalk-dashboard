@@ -44,7 +44,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
+// 상태 확인: 저장소 종류만 알려 줌 (turso = 원격 DB 연결됨, local = 서버 재시작 시 초기화되는 파일)
+app.get('/healthz', (_req, res) => res.json({ ok: true, storage: db.kind }));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(here, 'public')));
 app.use('/vendor/chart.js', express.static(path.join(here, 'node_modules/chart.js/dist')));
