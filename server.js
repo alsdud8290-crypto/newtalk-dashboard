@@ -289,7 +289,10 @@ mgmt.delete('/receivables/:id', wrap(async (req, res) => {
 // ---------- 경영지원팀: 엑셀 일괄 업로드 (과거 데이터 이관) ----------
 // 클라이언트가 엑셀을 파싱해 JSON으로 보낸다. 행 단위 오류는 모아서 반환하고, 오류가 있으면 아무것도 저장하지 않는다.
 mgmt.post('/import', wrap(async (req, res) => {
-  const { targets = [], monthly = [], sales = [], receivables = [], replaceSalesYears = false, replaceAllSales = false, replaceReceivables = false } = req.body || {};
+  const { targets = [], monthly = [], sales = [], receivables = [], replaceSalesYears = false, replaceAllSales = false, replaceReceivables = false, replaceRange = null } = req.body || {};
+  // replaceRange: 기간 파일(월·분기·연간) 다시 올리기 → 그 기간의 매출내역·미수금만 교체
+  const range = replaceRange && /^\d{4}-\d{2}$/.test(replaceRange.from) && /^\d{4}-\d{2}$/.test(replaceRange.to) && replaceRange.from <= replaceRange.to ? replaceRange : null;
+  if (replaceRange && !range) throw new HttpError(400, '교체할 기간이 올바르지 않습니다.');
   const errors = [];
   const check = (sheet, i, fn) => {
     try { return fn(); } catch (e) { errors.push(`[${sheet}] ${i + 2}행: ${e.message}`); return null; }
@@ -306,26 +309,45 @@ mgmt.post('/import', wrap(async (req, res) => {
   for (const [year, revenue] of t) stmts.push(['INSERT INTO targets (year, revenue) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET revenue = excluded.revenue', [year, revenue]]);
   for (const x of m) stmts.push(upsertMonthly(x.year, x.month, x.r));
   if (replaceAllSales) stmts.push(['DELETE FROM sales', []]);
+  else if (range && replaceSalesYears) stmts.push(['DELETE FROM sales WHERE substr(date,1,7) BETWEEN ? AND ?', [range.from, range.to]]);
   else if (replaceSalesYears) {
     for (const y of new Set(s.map((r) => r[0].slice(0, 4)))) stmts.push(['DELETE FROM sales WHERE substr(date,1,4) = ?', [y]]);
   }
   for (const r of s) stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', r]);
-  if (replaceReceivables) stmts.push(['DELETE FROM receivables', []]);
+  if (replaceReceivables) stmts.push(range ? ['DELETE FROM receivables WHERE substr(invoice_date,1,7) BETWEEN ? AND ?', [range.from, range.to]] : ['DELETE FROM receivables', []]);
   for (const r of rv) stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note, code) VALUES (?,?,?,?,?,?,?,?)', r]);
   await db.batch(stmts);
   res.json({ ok: true, counts: { targets: t.length, monthly: m.length, sales: s.length, receivables: rv.length } });
 }));
 
 // ---------- 경영지원팀: 데이터 내보내기 (엑셀·CSV 다운로드용) ----------
-// year 를 주면 그 해 데이터만 (미수금은 청구일 기준), 없으면 전체
+// period: 'YYYY'(연간) · 'YYYY-Qn'(분기) · 'YYYY-MM'(월) · 없음(전체). 예전 year= 도 받는다. 미수금은 청구일 기준
+const p2 = (n) => String(n).padStart(2, '0');
+function exportScope(query) {
+  const v = String(query.period || query.year || '').trim();
+  if (!v) return null;
+  let m = v.match(/^(\d{4})$/);
+  if (m) { const y = intParam(m[1], 2000, 2100, '연도'); return { from: `${y}-01`, to: `${y}-12`, label: `${y}년` }; }
+  m = v.match(/^(\d{4})-Q([1-4])$/i);
+  if (m) {
+    const y = intParam(m[1], 2000, 2100, '연도');
+    const q = Number(m[2]);
+    return { from: `${y}-${p2(q * 3 - 2)}`, to: `${y}-${p2(q * 3)}`, label: `${y}년 ${q}분기` };
+  }
+  m = v.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (m) { const y = intParam(m[1], 2000, 2100, '연도'); return { from: v, to: v, label: `${y}년 ${Number(m[2])}월` }; }
+  throw new HttpError(400, `잘못된 기간: ${v}`);
+}
+const MONTH_KEY = "printf('%04d-%02d', year, month)";
+const scoped = (sc) => ({
+  targets: () => (sc ? db.all('SELECT year, revenue FROM targets WHERE year BETWEEN ? AND ? ORDER BY year', Number(sc.from.slice(0, 4)), Number(sc.to.slice(0, 4))) : db.all('SELECT year, revenue FROM targets ORDER BY year')),
+  monthly: () => (sc ? db.all(`SELECT * FROM monthly WHERE ${MONTH_KEY} BETWEEN ? AND ? ORDER BY year, month`, sc.from, sc.to) : db.all('SELECT * FROM monthly ORDER BY year, month')),
+  sales: () => (sc ? db.all('SELECT * FROM sales WHERE substr(date,1,7) BETWEEN ? AND ? ORDER BY date, id', sc.from, sc.to) : db.all('SELECT * FROM sales ORDER BY date, id')),
+  receivables: () => (sc ? db.all('SELECT * FROM receivables WHERE substr(invoice_date,1,7) BETWEEN ? AND ? ORDER BY invoice_date, id', sc.from, sc.to) : db.all('SELECT * FROM receivables ORDER BY invoice_date, id')),
+});
 mgmt.get('/export', wrap(async (req, res) => {
-  const y = req.query.year ? String(intParam(req.query.year, 2000, 2100, '연도')) : null;
-  const [targets, monthly, sales, receivables] = await Promise.all([
-    y ? db.all('SELECT year, revenue FROM targets WHERE year = ?', Number(y)) : db.all('SELECT year, revenue FROM targets ORDER BY year'),
-    y ? db.all('SELECT * FROM monthly WHERE year = ? ORDER BY month', Number(y)) : db.all('SELECT * FROM monthly ORDER BY year, month'),
-    y ? db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date, id', y) : db.all('SELECT * FROM sales ORDER BY date, id'),
-    y ? db.all('SELECT * FROM receivables WHERE substr(invoice_date,1,4) = ? ORDER BY invoice_date, id', y) : db.all('SELECT * FROM receivables ORDER BY invoice_date, id'),
-  ]);
+  const q = scoped(exportScope(req.query));
+  const [targets, monthly, sales, receivables] = await Promise.all([q.targets(), q.monthly(), q.sales(), q.receivables()]);
   res.json({ targets, monthly, sales, receivables });
 }));
 
@@ -359,40 +381,40 @@ mgmt.post('/company/import', wrap(async (req, res) => {
 //   kind=targets   : 연간목표
 mgmt.get('/xlsx', wrap(async (req, res) => {
   const kind = String(req.query.kind || 'full');
-  const y = req.query.year ? intParam(req.query.year, 2000, 2100, '연도') : null;
+  const sc = exportScope(req.query);
+  const src = scoped(sc);
   const q = String(req.query.q || '').trim().toLowerCase();
   const now = new Date();
-  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const thisMonth = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
   const like = (fields) => (r) => !q || fields.map((f) => String(r[f] ?? '')).join(' ').toLowerCase().includes(q);
-  const targets = () => (y ? db.all('SELECT year, revenue FROM targets WHERE year = ?', y) : db.all('SELECT year, revenue FROM targets ORDER BY year'));
-  const monthly = () => (y ? db.all('SELECT * FROM monthly WHERE year = ? ORDER BY month', y) : db.all('SELECT * FROM monthly ORDER BY year, month'));
-  const sales = async () => (await (y ? db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date, id', String(y)) : db.all('SELECT * FROM sales ORDER BY date, id')))
-    .filter(like(['customer', 'series', 'note']));
+  const sales = async () => (await src.sales()).filter(like(['customer', 'series', 'note']));
   const receivables = async () => (await db.all(`SELECT * FROM receivables ${req.query.open === '1' ? 'WHERE amount - collected > 0.5' : ''} ORDER BY invoice_date, id`))
     .filter(like(['customer']));
+  const scopeName = sc ? sc.label.replace(/\s/g, '') : '전체';
   let spec;
   let label;
   if (kind === 'monthly') {
-    spec = { months: await ledger.monthsWithData(y), data: { targets: await targets(), monthly: await monthly() } };
-    label = `월별실적_${y || '전체'}`;
+    spec = { months: await ledger.monthsWithData(sc), data: { targets: await src.targets(), monthly: await src.monthly() } };
+    label = `월별실적_${scopeName}`;
   } else if (kind === 'receivables') {
     spec = { months: [thisMonth], data: { receivables: await receivables() } };
     label = `미수금_${thisMonth}`;
   } else if (kind === 'sales') {
     spec = { data: { sales: await sales() } };
-    label = `매출내역_${y || '전체'}`;
+    label = `매출내역_${scopeName}`;
   } else if (kind === 'targets') {
-    spec = { data: { targets: await targets() } };
+    spec = { data: { targets: await src.targets() } };
     label = '연간목표';
   } else {
-    const months = await ledger.monthsWithData(y);
-    const rec = await db.all(`SELECT * FROM receivables ${y ? 'WHERE substr(invoice_date,1,4) = ?' : ''} ORDER BY invoice_date, id`, ...(y ? [String(y)] : []));
-    if (!months.includes(thisMonth) && rec.length && (!y || y === now.getFullYear())) months.push(thisMonth);
-    spec = { guide: true, months: months.sort(), data: { targets: await targets(), monthly: await monthly(), sales: await sales(), receivables: rec } };
-    label = `전체_${y || ''}`.replace(/_$/, '');
+    const months = await ledger.monthsWithData(sc);
+    const rec = await src.receivables();
+    const inScope = !sc || (thisMonth >= sc.from && thisMonth <= sc.to);
+    if (!months.includes(thisMonth) && inScope && (await db.get('SELECT 1 FROM receivables LIMIT 1'))) months.push(thisMonth);
+    spec = { guide: true, scope: sc, months: months.sort(), data: { targets: await src.targets(), monthly: await src.monthly(), sales: await sales(), receivables: rec } };
+    label = scopeName;
   }
   const buf = await ledger.buildCompanyWorkbook(spec);
-  const stampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const stampStr = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
   const name = `뉴토크코리아_경영지원관리_${label}${q ? `_${q}` : ''}_${stampStr}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);

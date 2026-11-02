@@ -189,6 +189,7 @@ export async function render(main, ctx) {
   let parsed = [];
   let ledgerSheets = []; // 회사 양식(채권·채무 현황) 시트 — 서버에서 읽음
   let fullBackup = false; // '경영지원 관리 (전체)' 내려받기 파일인지
+  let backupRange = null; // 기간(월·분기·연간) 내려받기 파일이면 { from, to, label }
 
   main.innerHTML = `
     <div class="page-head">
@@ -229,6 +230,7 @@ export async function render(main, ctx) {
     parsed = [];
     ledgerSheets = [];
     fullBackup = false;
+    backupRange = null;
     for (const f of files) {
       try {
         const buf = await f.arrayBuffer();
@@ -239,6 +241,11 @@ export async function render(main, ctx) {
           if (name === '안내') {
             const a1 = wb.Sheets[name].A1?.v || '';
             if (String(a1).includes('경영지원 관리 (전체)')) fullBackup = true;
+            else {
+              const lb = String(a1).match(/경영지원 관리 \((.+)\)/);
+              const rg = String(wb.Sheets[name].B3?.v || '').match(/(\d{4}-\d{2})\s*~\s*(\d{4}-\d{2})/);
+              if (lb && rg) backupRange = { label: lb[1], from: rg[1], to: rg[2] };
+            }
             continue;
           }
           const p = parseSheet(name, wb.Sheets[name]);
@@ -281,19 +288,21 @@ export async function render(main, ctx) {
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><h3>미리보기</h3>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            ${hasSales ? '<span class="check-row"><label><input type="checkbox" id="u-rs"> 해당 연도의 기존 매출 내역을 지우고 교체</label></span>' : ''}
-            ${hasRecv ? '<span class="check-row"><label><input type="checkbox" id="u-rr"> 기존 미수금 전체를 지우고 교체</label></span>' : ''}
+            ${hasSales ? `<span class="check-row"><label><input type="checkbox" id="u-rs"> ${backupRange ? `${esc(backupRange.label)}의 기존 매출 내역을 지우고 교체` : '해당 연도의 기존 매출 내역을 지우고 교체'}</label></span>` : ''}
+            ${hasRecv ? `<span class="check-row"><label><input type="checkbox" id="u-rr"> ${backupRange ? `${esc(backupRange.label)}에 청구된 기존 미수금을 지우고 교체` : '기존 미수금 전체를 지우고 교체'}</label></span>` : ''}
             <button class="btn primary" id="u-save" ${usable.length || ledgerSheets.length ? '' : 'disabled'}>저장</button>
           </div>
         </div>
         ${fullBackup
           ? '<div class="notice" style="margin-bottom:12px"><b>전체 데이터 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적은 파일에 있는 연도·월만 덮어씁니다.</div>'
+          : backupRange
+          ? `<div class="notice" style="margin-bottom:12px"><b>${esc(backupRange.label)} 데이터 파일</b>(${backupRange.from} ~ ${backupRange.to})입니다. 저장하면 이 기간의 매출내역·미수금(청구일 기준)만 파일 내용으로 <b>교체</b>되고, 다른 기간 데이터는 그대로 둡니다.</div>`
           : '<div class="notice" style="margin-bottom:12px">같은 파일을 두 번 올리면 매출 내역·미수금이 중복 등록됩니다. 다시 올릴 때는 \'지우고 교체\'를 선택해 주세요.</div>'}
         <div id="u-result"></div>
         ${ledgerHtml}
         ${parsed.map((p) => sheetPreview(p)).join('')}
       </div>`;
-    if (fullBackup) el.querySelectorAll('#u-rs, #u-rr').forEach((c) => { c.checked = true; });
+    if (fullBackup || backupRange) el.querySelectorAll('#u-rs, #u-rr').forEach((c) => { c.checked = true; });
     el.querySelectorAll('[data-lm]').forEach((inp) => inp.addEventListener('change', () => { ledgerSheets[Number(inp.dataset.lm)].month = inp.value; }));
     ledgerSheets.forEach((sh) => { if (!sh.month) sh.month = thisMonth; });
     el.querySelector('#u-save')?.addEventListener('click', save);
@@ -321,6 +330,7 @@ export async function render(main, ctx) {
     body.replaceSalesYears = !!main.querySelector('#u-rs')?.checked;
     body.replaceReceivables = !!main.querySelector('#u-rr')?.checked;
     body.replaceAllSales = fullBackup && body.replaceSalesYears; // 전체 백업 복원: 매출내역 전부 교체
+    if (backupRange) body.replaceRange = { from: backupRange.from, to: backupRange.to }; // 기간 파일: 그 기간만 교체
     const result = main.querySelector('#u-result');
     const btn = main.querySelector('#u-save');
     btn.disabled = true;
@@ -342,7 +352,8 @@ export async function render(main, ctx) {
         const out = await api('/api/mgmt/company/import', { method: 'POST', body: {
           month: sh.month, entries: sh.entries,
           applyMonthly: !monthlyInFile.has(sh.month),
-          applyReceivables: !body.receivables.length && sh.month === latest,
+          // 내려받은 백업 파일은 미수금 시트가 따로 있으므로 미수금 현황으로 미수금을 덮지 않는다
+          applyReceivables: !fullBackup && !backupRange && !body.receivables.length && sh.month === latest,
         } });
         if (out.receivables !== null) recvFromCompany = out.receivables;
         if (out.monthly) costMonths.push(sh.month);

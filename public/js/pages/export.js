@@ -19,18 +19,20 @@ export async function render(main, ctx) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head"><h3>범위</h3></div>
       <div class="filters">
-        <select class="input" id="x-year">
-          <option value="">전체 기간</option>
-          ${years.map((y) => `<option value="${y}">${y}년</option>`).join('')}
-        </select>
-        <span class="hint" style="color:var(--text-3)">연도를 고르면 그 해 데이터만 (미수금은 청구일 기준)</span>
+        <div class="seg" id="x-mode">
+          ${[['', '전체'], ['year', '연간'], ['quarter', '분기'], ['month', '월']].map(([v, l]) => `<button type="button" class="${v ? '' : 'on'}" data-m="${v}">${l}</button>`).join('')}
+        </div>
+        <select class="input" id="x-year" hidden>${years.map((y) => `<option value="${y}">${y}년</option>`).join('')}</select>
+        <select class="input" id="x-q" hidden>${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === Math.ceil((new Date().getMonth() + 1) / 3) ? 'selected' : ''}>${q}분기 (${q * 3 - 2}~${q * 3}월)</option>`).join('')}</select>
+        <select class="input" id="x-m" hidden>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i === new Date().getMonth() ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>
+        <span class="hint" style="color:var(--text-3)">고른 기간의 데이터만 담습니다 (미수금은 청구일 기준). 기간 파일을 다시 올리면 그 기간만 교체됩니다.</span>
       </div>
     </div>
     <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div class="ttl"><h3>한 번에 받기</h3><span class="hint">엑셀 한 파일: 안내 · 달마다 경영지원 관리(미수금 현황·매입·경비·기타 지출) · 연간목표 · 월별실적 · 매출내역 · 미수금</span></div></div>
+      <div class="card-head"><div class="ttl"><h3>한 번에 받기</h3><span class="hint">위에서 고른 기간 · 엑셀 한 파일: 안내 · 달마다 경영지원 관리(미수금 현황·매입·경비·기타 지출) · 연간목표 · 월별실적 · 매출내역 · 미수금</span></div></div>
       <div class="filters">
-        <button class="btn brand" id="x-all">⬇ 전체 데이터 엑셀 (경영지원 관리 양식)</button>
-        <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ 전체 데이터 CSV (ZIP · 파일 4개)</button>
+        <button class="btn brand" id="x-all">⬇ 엑셀 (경영지원 관리 양식)</button>
+        <button class="btn" id="x-all-csv" title="CSV 파일 4개를 ZIP 하나로 묶어 내려받습니다">⬇ CSV (ZIP · 파일 4개)</button>
       </div>
       <div class="hint" style="margin-top:10px" id="x-count"></div>
     </div>
@@ -45,11 +47,32 @@ export async function render(main, ctx) {
     </div>`;
 
   const yearSel = main.querySelector('#x-year');
+  const qSel = main.querySelector('#x-q');
+  const mSel = main.querySelector('#x-m');
+  const thisYear = String(new Date().getFullYear());
+  if ([...yearSel.options].some((o) => o.value === thisYear)) yearSel.value = thisYear;
+  let mode = '';
   let data = null;
-  const scopeName = () => (yearSel.value ? `${yearSel.value}년` : '전체');
+  // 서버 period 형식: '' 전체 · 2026 · 2026-Q3 · 2026-09
+  const period = () => (!mode || !yearSel.value ? '' : mode === 'year' ? yearSel.value
+    : mode === 'quarter' ? `${yearSel.value}-Q${qSel.value}` : `${yearSel.value}-${mSel.value.padStart(2, '0')}`);
+  const scopeName = () => (!mode ? '전체' : mode === 'year' ? `${yearSel.value}년`
+    : mode === 'quarter' ? `${yearSel.value}년${qSel.value}분기` : `${yearSel.value}년${mSel.value}월`);
+
+  main.querySelector('#x-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]');
+    if (!b) return;
+    mode = b.dataset.m;
+    main.querySelectorAll('#x-mode [data-m]').forEach((x) => x.classList.toggle('on', x === b));
+    yearSel.hidden = !mode;
+    qSel.hidden = mode !== 'quarter';
+    mSel.hidden = mode !== 'month';
+    load();
+  });
+  [qSel, mSel].forEach((el) => el.addEventListener('change', load));
 
   async function load() {
-    data = await api(`/api/mgmt/export${yearSel.value ? `?year=${yearSel.value}` : ''}`);
+    data = await api(`/api/mgmt/export${period() ? `?period=${period()}` : ''}`);
     KEYS.forEach((k) => { main.querySelector(`#x-n-${k}`).textContent = `${data[k].length.toLocaleString()}건`; });
     main.querySelector('#x-count').textContent = KEYS.map((k) => `${DATASETS[k].sheet} ${data[k].length}`).join(' · ');
   }
@@ -57,7 +80,7 @@ export async function render(main, ctx) {
 
   main.querySelector('#x-all').addEventListener('click', async (e) => {
     e.target.disabled = true;
-    await downloadCompany({ kind: 'full', year: yearSel.value });
+    await downloadCompany({ kind: 'full', period: period() });
     e.target.disabled = false;
   });
   main.querySelector('#x-all-csv').addEventListener('click', async (e) => {
@@ -72,7 +95,7 @@ export async function render(main, ctx) {
     const k = e.target.dataset.x;
     if (!k || !data) return;
     if (e.target.dataset.f === 'csv') downloadCsv(`뉴토크코리아_${DATASETS[k].sheet}_${scopeName()}_${stamp()}`, datasetSheet(k, data[k]));
-    else downloadCompany({ kind: KIND[k], year: k === 'receivables' ? '' : yearSel.value });
+    else downloadCompany({ kind: KIND[k], period: k === 'receivables' ? '' : period() });
   });
 
   await load();
