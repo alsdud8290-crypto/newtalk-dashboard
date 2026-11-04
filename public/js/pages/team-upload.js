@@ -42,19 +42,24 @@ const skipChip = (r) => `<span class="badge" title="${r.superseded ? '같은 파
 
 export async function render(main, ctx) {
   const conf = UPLOADS[ctx.kind];
-  let batch = null;
-  let filter = 'all';
-  const edits = {}; // { rowId: { values: {...}, excluded } } — [다시 검사]·[저장] 때 보냄
-
   main.innerHTML = `
     <div class="page-head"><div><h2>${conf.title}</h2><div class="sub">${conf.sub}</div></div>
       <div class="filters">${conf.back ? `<a class="btn" href="${conf.back}">← ${conf.backLabel}</a>` : ''}<a class="btn" href="#/${conf.team}/uploads">업로드 이력</a></div></div>
     <div id="tu-body"></div>`;
-  const body = main.querySelector('#tu-body');
+  mountUpload(main.querySelector('#tu-body'), ctx.kind);
+}
+
+// 업로드 → 확인 → 저장 화면을 body 안에 그린다. heading 을 주면 파일 선택 카드에 제목·설명을 붙인다 (다른 화면 위에 넣을 때)
+export function mountUpload(body, kind, { heading = '' } = {}) {
+  const conf = UPLOADS[kind];
+  let batch = null;
+  let filter = 'all';
+  const edits = {}; // { rowId: { values: {...}, excluded } } — [다시 검사]·[저장] 때 보냄
 
   function drawPicker() {
     body.innerHTML = `
       <div class="card" style="margin-bottom:16px">
+        ${heading ? `<div class="card-head"><div class="ttl"><h3>${heading}</h3><span class="hint">${conf.sub}</span></div></div>` : ''}
         <label class="dropzone" id="tu-drop"><input type="file" id="tu-file" accept="${conf.accept}" hidden>
           <div style="font-size:15px;font-weight:600;margin-bottom:4px">파일을 여기에 끌어다 놓거나 클릭해서 선택</div>
           <div class="hint">${conf.accept} · 10MB 이하 · 올리면 바로 저장되지 않고 확인 화면이 나옵니다</div></label>
@@ -74,7 +79,7 @@ export async function render(main, ctx) {
       const buf = new Uint8Array(await file.arrayBuffer());
       let bin = '';
       for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      batch = await api('/api/uploads', { method: 'POST', body: { kind: ctx.kind, file_name: file.name, file: btoa(bin) } });
+      batch = await api('/api/uploads', { method: 'POST', body: { kind, file_name: file.name, file: btoa(bin) } });
       Object.keys(edits).forEach((k) => delete edits[k]);
       filter = 'all';
       drawReview();
@@ -206,7 +211,7 @@ const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: 
 const UPLOAD_LINKS = {
   mgmt: [['#/upload', '경영 데이터 업로드']],
   production: [['#/production/upload', '제조내역 업로드'], ['#/production/upload-orders', '수주서 업로드']],
-  service: [['#/service/upload', '출장보고서 업로드'], ['#/prices/upload', '견적서 업로드']],
+  service: [['#/service/reports/new', '출장보고서 입력'], ['#/prices/upload', '견적서 업로드']],
 };
 export const history = {
   async render(main, ctx) {

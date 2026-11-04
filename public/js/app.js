@@ -38,13 +38,12 @@ const ROUTES = {
   '/production/calendar': { page: prodCalendar, perm: 'production', title: '납기 캘린더' },
   '/production/upload': { page: teamUpload, perm: 'production', edit: 'production', title: '제조내역 업로드', kind: 'manufacturing_excel' },
   '/production/upload-orders': { page: teamUpload, perm: 'production', edit: 'production', title: '수주서 PDF 업로드', kind: 'sales_order_pdf' },
-  '/service/upload': { page: teamUpload, perm: 'service', edit: 'service', title: '출장보고서 PDF 업로드', kind: 'trip_report_pdf' },
   '/service/uploads': { page: teamUpload.history, perm: 'service', edit: 'service', title: '업로드 이력', team: 'service' },
   '/prices/upload': { page: teamUpload, perm: PART_PERMS, edit: 'service', title: '견적서 PDF 업로드', kind: 'quote_pdf' },
   '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
   '/service': { page: servicePage, perm: 'service', title: '서비스팀 대시보드' },
   '/service/reports': { page: servicePage.reports, perm: 'service', title: '출장보고서 목록' },
-  '/service/reports/new': { page: servicePage.reportForm, perm: 'service', edit: 'service', title: '출장보고서 직접 입력' },
+  '/service/reports/new': { page: servicePage.reportForm, perm: 'service', edit: 'service', title: '출장보고서 입력' },
   '/service/regions': { page: servicePage.regions, perm: 'service', edit: 'service', title: '요청처 지역 관리' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
@@ -87,8 +86,7 @@ const MENU = [
   { type: 'group', label: '서비스', icon: 'service', perm: 'service', items: [
     ['/service', '서비스 대시보드'],
     ['/service/reports', '출장보고서 목록'],
-    ['/service/upload', '출장보고서 업로드'],
-    ['/service/reports/new', '출장보고서 직접 입력'],
+    ['/service/reports/new', '출장보고서 입력'],
     ['/service/regions', '요청처 지역 관리'],
     ['/service/uploads', '업로드 이력'],
   ] },
@@ -207,9 +205,13 @@ function changePassword(forced) {
   });
 }
 
+// 없앤 화면의 옛 주소(즐겨찾기 등) → 옮겨 간 화면
+const MOVED = { '/service/upload': '/service/reports/new' };
+
 async function route() {
   if (!state.user) return;
   const path = location.hash.replace(/^#/, '') || '/';
+  if (MOVED[path]) { location.replace(`#${MOVED[path]}`); return; }
   const target = ROUTES[path] ? path : firstAllowed();
   if (!target) { document.getElementById('main').innerHTML = '<div class="card empty">열람 가능한 메뉴가 없습니다. 관리자에게 권한을 요청해 주세요.</div>'; return; }
   if (path !== target && !ROUTES[path]) { location.replace(`#${target}`); return; }

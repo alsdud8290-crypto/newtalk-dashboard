@@ -1,11 +1,12 @@
 // 서비스팀 화면 (ITB2026에서 옮겨 옴)
 //  대시보드: 출장 실적(횟수·유상/무상·월별) · 출장지 지도와 지역 순위(시·도/시·군) · 교체 부품 · A/S 모델 · 담당자
-//  출장보고서 목록·상세 / 직접 입력 / 요청처 지역 관리
+//  출장보고서 목록·상세 / 입력(PDF 올리기·직접 입력) / 요청처 지역 관리
 import { api, esc, toast, today } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip } from '../korea-map.js';
 import { periodDownloadButton, bindPeriodDownload, downloadFrom, addCardMenus, bindCardMenus } from '../exporter.js';
 import { prodPeriod, periodQS, periodSelector, dlPeriod, dash } from './prod-common.js';
+import { mountUpload } from './team-upload.js';
 
 const PAID_COLORS = { 유상: SERIES[0], 무상: SERIES[2] };
 const paidColor = (n) => PAID_COLORS[n] || OTHER;
@@ -219,7 +220,7 @@ export const reports = {
   },
 };
 
-// ---------------- 출장보고서 직접 입력 (서비스팀 수정 권한) ----------------
+// ---------------- 출장보고서 입력: PDF 올리기 + 직접 입력 (서비스팀 수정 권한) ----------------
 export const reportForm = {
   async render(main) {
     const ch = await api('/api/service/form-choices');
@@ -232,10 +233,12 @@ export const reportForm = {
       <button type="button" class="btn sm danger" data-rm>삭제</button></div>`;
     main.innerHTML = `
       <div class="page-head">
-        <div><h2>출장보고서 직접 입력</h2><div class="sub">PDF 업로드와 같은 규칙으로 검사합니다. 같은 출장 시작일·요청처의 보고서가 있으면 저장 전에 알려 줍니다.</div></div>
-        <div class="filters"><a class="btn" href="#/service/reports">← 목록</a></div>
+        <div><h2>출장보고서 입력</h2><div class="sub">PDF로 올리거나 직접 입력합니다. 같은 출장 시작일·요청처의 보고서가 있으면 저장 전에 알려 줍니다.</div></div>
+        <div class="filters"><a class="btn" href="#/service/reports">← 목록</a><a class="btn" href="#/service/uploads">업로드 이력</a></div>
       </div>
+      <div id="rf-upload"></div>
       <form id="rf" class="card" style="max-width:980px" autocomplete="off">
+        <div class="card-head"><div class="ttl"><h3>직접 입력</h3><span class="hint">PDF 업로드와 같은 규칙으로 검사합니다</span></div></div>
         <datalist id="rf-requesters">${ch.requesters.map((r) => `<option value="${esc(r.requester)}">`).join('')}</datalist>
         <datalist id="rf-people">${ch.people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <datalist id="rf-models">${ch.models.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
@@ -263,6 +266,7 @@ export const reportForm = {
         <div class="filters" style="margin-top:14px"><label class="chk" id="rf-dup-wrap" hidden><input type="checkbox" id="rf-dup"> 중복 아님 — 같은 곳에 실제로 두 번 간 경우 저장</label>
           <button class="btn primary">저장</button></div>
       </form>`;
+    mountUpload(main.querySelector('#rf-upload'), 'trip_report_pdf', { heading: 'PDF로 올리기' });
     const f = main.querySelector('#rf');
     let paid = '유상';
     const districtSel = f.district;
