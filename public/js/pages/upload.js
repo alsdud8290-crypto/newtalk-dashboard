@@ -332,7 +332,7 @@ export async function render(main, ctx) {
       const costMonths = [];
       for (const sh of ledgerSheets) {
         const out = await api('/api/mgmt/company/import', { method: 'POST', body: {
-          month: sh.month, entries: sh.entries,
+          month: sh.month, entries: sh.entries, sections: sh.found,
           applyMonthly: !monthlyInFile.has(sh.month),
           // 내려받은 백업 파일은 미수금 시트가 따로 있으므로 미수금 현황으로 미수금을 덮지 않는다
           applyReceivables: !fullBackup && !backupRange && !body.receivables.length && sh.month === latest,

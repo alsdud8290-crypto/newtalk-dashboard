@@ -390,7 +390,7 @@ mgmt.post('/company/import', wrap(async (req, res) => {
   if (!ledger.validMonth(b.month)) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${b.month || '(빈 값)'}`);
   try {
     res.json(await ledger.importCompanyMonth(b.month, Array.isArray(b.entries) ? b.entries : [],
-      { applyMonthly: b.applyMonthly !== false, applyReceivables: b.applyReceivables !== false }));
+      { applyMonthly: b.applyMonthly !== false, applyReceivables: b.applyReceivables !== false, sections: Array.isArray(b.sections) ? b.sections : null }));
   } catch (e) {
     throw new HttpError(400, e.message);
   }
@@ -437,10 +437,10 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
     if (sc) {
       // 기간: 달마다 그 기간의 미수금 현황 + 그 기간에 청구된 건(미수·수금 완료 모두)
       const months = await scopeMonths();
-      spec = { guide, scope: sc, months, data: { receivables: (await src.receivables()).filter(like(['customer'])) } };
+      spec = { guide, scope: sc, months, arOnly: true, data: { receivables: (await src.receivables()).filter(like(['customer'])) } };
       label = `미수금_${scopeName}`;
     } else {
-      spec = { guide: guide && req.query.open !== '1', months: [thisMonth], data: { receivables: await receivables() } };
+      spec = { guide: guide && req.query.open !== '1', months: [thisMonth], arOnly: true, data: { receivables: await receivables() } };
       label = `미수금_${thisMonth}`;
     }
   } else if (kind === 'sales') {
