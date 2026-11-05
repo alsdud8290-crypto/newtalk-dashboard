@@ -201,6 +201,14 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .month-grid .row-head { position: sticky; left: 0; z-index: 1; background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; min-width: 104px; }
 .month-grid thead .row-head { z-index: 2; background: var(--surface-2); color: var(--text-2); font-size: 12px; }
 .month-grid .input { min-width: 108px; text-align: right; }
+/* ⓘ 도움말: 마우스를 올리거나(탭하면) 위쪽에 설명 */
+.info-tip { position: relative; display: inline-block; margin-left: 4px; color: var(--text-3); font-weight: 400; cursor: help; outline: none; }
+.info-tip:hover, .info-tip:focus-visible, .info-tip:focus { color: var(--text); }
+.info-tip::after { content: attr(data-tip); position: absolute; left: -6px; bottom: calc(100% + 6px); width: 260px; padding: 8px 10px; border-radius: 8px;
+  background: var(--text); color: var(--surface); font-size: 12px; font-weight: 400; line-height: 1.5; white-space: normal; word-break: keep-all; text-align: left;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18); opacity: 0; visibility: hidden; transition: opacity .12s; z-index: 5; pointer-events: none; }
+.info-tip:hover::after, .info-tip:focus::after { opacity: 1; visibility: visible; }
+.month-grid tr:has(.info-tip:hover, .info-tip:focus) .row-head { z-index: 3; }
 .month-grid .grp-row .row-head { background: var(--surface-3); color: var(--text-2); font-size: 12px; padding: 7px 12px; }
 .month-grid .sum-row td, .month-grid .sum-row .row-head { background: var(--surface-2); font-weight: 700; }
 .month-grid td.row-total { font-weight: 600; }

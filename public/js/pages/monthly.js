@@ -15,6 +15,7 @@ export const FIELDS = [
   ['expense', '경비', 'cost'],
   ['receivables_total', '미수금 총액', 'recv'],
 ];
+const RECV_TIP = '그 달 말 기준 잔액을 직접 입력하거나, [경영 데이터 업로드]에 경영지원 관리 엑셀을 올리면 미수금 현황 합계로 자동 입력됩니다.';
 const LABEL = Object.fromEntries(FIELDS.map(([f, l]) => [f, l]));
 const TYPE_FIELD = { 제품: 'product_sales', 상품: 'goods_sales', 용역: 'service_sales' };
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -95,7 +96,7 @@ export async function render(main, ctx) {
     updateTargetHint();
     detail = m.detail;
     const byMonth = Object.fromEntries(m.rows.map((r) => [r.month, r]));
-    const row = ([f, l, g]) => `<tr data-row="${f}"><th class="row-head">${l}</th>
+    const row = ([f, l, g]) => `<tr data-row="${f}"><th class="row-head">${l}${g === 'recv' ? `<span class="info-tip" tabindex="0" role="note" aria-label="${RECV_TIP}" data-tip="${RECV_TIP}">ⓘ</span>` : ''}</th>
       ${MONTHS.map((mo) => `<td><input class="input money" data-f="${f}" data-m="${mo}" value="${comma(byMonth[mo]?.[f] || '')}" aria-label="${mo}월 ${l}"></td>`).join('')}
       <td class="r num ${g === 'recv' ? 'muted' : 'row-total'}">${g === 'recv' ? '-' : ''}</td></tr>`;
     const totalRow = (g, l) => `<tr class="sum-row" data-total="${g}"><th class="row-head">${l}</th>${MONTHS.map(() => '<td class="r num"></td>').join('')}<td class="r num"></td></tr>`;
