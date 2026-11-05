@@ -153,7 +153,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
             .map(([l, v, std]) => `<div class="${std ? 'std' : ''}"><span>${l}</span><b>${wonText(v)}</b></div>`).join('')}
         </div>
         ${bars.length ? `<div style="margin:16px 0"><div class="sub-ttl">출장지별 단가 · 뉴토크 기준값 대비</div>${legend}<div class="chart-box"><canvas id="pp-bars"></canvas></div></div>` : ''}
-        ${!d.prices.length ? '<div class="empty">아직 출장지별 단가가 없습니다. 부품 단가 데이터 업로드의 "출장지별 단가"로 넣을 수 있습니다.</div>' : `
+        ${!d.prices.length ? '<div class="empty">아직 출장지별 단가가 없습니다. 부품 단가 데이터 업로드의 "출장지(판매처)별 단가"로 넣을 수 있습니다.</div>' : `
         <div class="table-wrap"><table class="tbl">
           <thead><tr><th>출장지(업체)</th><th>적용 시작일</th><th class="r">단가</th><th class="r">뉴토크 기준값</th><th class="r">기준값 대비</th><th>출처</th><th>사업명</th><th>비고</th></tr></thead>
           <tbody>${d.prices.map((p) => `
@@ -201,7 +201,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
 //  ② 출장지별 단가 (파트넘버·출장지·단가·적용 시작일)
 const UPLOAD_KINDS = [
   ['part_price_csv', '부품 단가 데이터 (기준단가)', 'catalog'],
-  ['company_price_csv', '출장지별 단가', 'company'],
+  ['company_price_csv', '출장지(판매처)별 단가 · 수주 내역', 'company'],
 ];
 function renderUpload(body) {
   let kind = UPLOAD_KINDS[0];
@@ -212,7 +212,7 @@ function renderUpload(body) {
         <button class="btn sm" id="pu-tpl">⬇ CSV 양식</button>
       </div>
       <div id="pu-body"></div>`;
-    mountUpload(body.querySelector('#pu-body'), kind[0], { heading: kind[0] === 'part_price_csv' ? '부품 단가 데이터 CSV 업로드' : '출장지별 단가 CSV 업로드' });
+    mountUpload(body.querySelector('#pu-body'), kind[0], { heading: kind[0] === 'part_price_csv' ? '부품 단가 데이터 CSV 업로드' : '출장지(판매처)별 단가 · 수주 내역 CSV 업로드' });
     body.querySelector('#pu-kind').addEventListener('click', (e) => {
       const b = e.target.closest('[data-k]');
       if (b && b.dataset.k !== kind[0]) { kind = UPLOAD_KINDS.find((k) => k[0] === b.dataset.k); draw(); }
@@ -299,7 +299,7 @@ async function renderCompanies(body, charts, destroyCharts) {
   function draw() {
     destroyCharts();
     $('#pc-main').innerHTML = !data.companies.length
-      ? '<div class="empty">비교할 출장지 단가가 없습니다. 부품 단가 데이터 업로드의 "출장지별 단가"로 넣을 수 있습니다.</div>'
+      ? '<div class="empty">비교할 출장지 단가가 없습니다. 부품 단가 데이터 업로드의 "출장지(판매처)별 단가"로 넣을 수 있습니다.</div>'
       : `${data.low_count ? `<div class="notice warn">${lowBadge('')} 뉴토크 기준값보다 <b>${data.low_alert_rate}% 이상 낮은</b> 견적이 <b>${data.low_count}건</b> 있습니다. 업체를 눌러 어떤 부품인지 확인하세요.</div>` : ''}
         ${legend}<div class="chart-box"><canvas id="pc-bars"></canvas></div>
         <div class="table-wrap" style="margin-top:14px"><table class="tbl click">
