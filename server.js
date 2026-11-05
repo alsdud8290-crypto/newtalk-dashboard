@@ -16,6 +16,7 @@ import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
 import * as service from './lib/service.js';
 import './lib/pdf-uploads.js'; // 수주서·출장보고서 PDF 업로드 규칙 등록
+import './lib/order-uploads.js'; // 생산 데이터 업로드: 수주내역 엑셀 시트 규칙 등록
 import './lib/part-uploads.js'; // 부품 단가 데이터(CSV)·신규 부품(엑셀) 업로드 규칙 등록
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -758,6 +759,8 @@ prod.get('/serials', wrap(async (req, res) => res.json(await production.searchSe
 prod.get('/serials/:serial', wrap(async (req, res) => res.json(await production.serialDetail(req.params.serial))));
 prod.get('/due-calendar', wrap(async (req, res) => res.json(await production.dueCalendar(req.query))));
 prod.get('/due-calendar/search', wrap(async (req, res) => res.json(await production.searchDue(req.query.q))));
+// 납기 캘린더 출고 처리(체크박스·실제 출고일) — 생산팀 수정 권한
+prod.patch('/due-calendar/shipment', wrap(async (req, res) => res.json(await production.setShipment(req.body || {}))));
 prod.get('/due-soon', wrap(async (_req, res) => res.json(await production.dueSoon())));
 prod.get('/records', wrap(async (req, res) => res.json(await production.recordList(req.query))));
 prod.get('/records/export', wrap(async (req, res) => {

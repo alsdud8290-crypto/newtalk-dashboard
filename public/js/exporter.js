@@ -111,13 +111,17 @@ export function saveBlob(filename, blob) {
 
 // 화면 영역 → PDF (A4). maxPages 안에서 글자가 가장 크게 보이도록 쪽 수(1·2)와 가로·세로를 고른다.
 //  2쪽이면 화면의 큰 덩어리(카드 줄) 경계 중 가운데에 가장 가까운 곳에서 나눈다. PDF는 직접 만든다 (쪽마다 JPEG 한 장)
-export async function downloadPdf(el, filename, { maxPages = 1 } = {}) {
+// paged: 쪽 수 제한 없이 A4 가로 너비에 맞춰 여러 쪽으로 (카드 사이에서만 나눔, 한 쪽보다 큰 카드는 그 쪽만 줄여 통째로)
+// expandTables: 찍는 동안 스크롤로 잘린 표(.table-wrap 높이 제한)를 끝까지 펼침
+// (두 옵션 모두 생산팀 대시보드용. 주지 않으면 예전과 같이 maxPages 쪽 안에 맞춤)
+export async function downloadPdf(el, filename, { maxPages = 1, paged = false, expandTables = false } = {}) {
   if (!window.html2canvas) return toast('PDF 저장 기능을 불러오지 못했습니다.', true);
   try {
     const scale = 2;
     // 왼쪽 끝에 붙은 요소(섹션 번호 등)가 잘리지 않게 찍는 동안만 여백을 둔다. 페이지 나눌 위치도 그 상태에서 잰다
     const pad = el.style.padding;
     const cs = getComputedStyle(el);
+    if (expandTables) el.classList.add('pdf-expand');
     el.style.padding = ['Top', 'Right', 'Bottom', 'Left'].map((k) => `${parseFloat(cs[`padding${k}`]) + 8}px`).join(' ');
     let canvas;
     let cuts;
@@ -131,11 +135,32 @@ export async function downloadPdf(el, filename, { maxPages = 1 } = {}) {
         backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
         scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
       });
-    } finally { el.style.padding = pad; }
+    } finally { el.style.padding = pad; el.classList.remove('pdf-expand'); }
     const W = canvas.width;
     const H = canvas.height;
     cuts = cuts.filter((v) => v > 0 && v < H);
     const margin = 24;
+    if (paged) {
+      const [pw, ph] = [842, 595];
+      const fit = (pw - margin * 2) / W;
+      const pageH = (ph - margin * 2) / fit;
+      const gap = 2 * scale;
+      const parts = [];
+      for (let y0 = 0; y0 < H;) {
+        let y1;
+        if (H - y0 <= pageH) y1 = H;
+        else {
+          const inPage = cuts.filter((c) => c > y0 + gap && c + gap <= y0 + pageH);
+          // 한 쪽에 들어가는 마지막 카드 경계에서 자름. 없으면(카드 하나가 한 쪽보다 큼) 그 카드 끝까지 한 쪽에 줄여 넣음
+          y1 = inPage.length ? Math.max(...inPage) + gap : Math.min(H, (cuts.find((c) => c > y0 + gap) ?? H) + gap);
+        }
+        parts.push([y0, y1]);
+        y0 = y1;
+      }
+      const pages = parts.map(([y0, y1]) => ({ ...slice(canvas, y0, y1), fit: Math.min(fit, (ph - margin * 2) / (y1 - y0)) }));
+      saveBlob(`${filename}.pdf`, pdfFromImages(pages, pw, ph, margin, fit));
+      return;
+    }
     const plans = [[[0, H]]];
     if (maxPages >= 2 && cuts.length) {
       const c = cuts.reduce((best, v) => (Math.abs(v - H / 2) < Math.abs(best - H / 2) ? v : best));
@@ -151,23 +176,28 @@ export async function downloadPdf(el, filename, { maxPages = 1 } = {}) {
         if (!pick || score > pick.score) pick = { parts, pw, ph, fit, score };
       }
     }
-    const pages = pick.parts.map(([y0, y1]) => {
-      const part = document.createElement('canvas');
-      part.width = W;
-      part.height = Math.max(1, Math.min(H, y1) - y0);
-      const ctx = part.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, part.width, part.height);
-      ctx.drawImage(canvas, 0, y0, W, part.height, 0, 0, W, part.height);
-      const bin = atob(part.toDataURL('image/jpeg', 0.92).split(',')[1]);
-      return { w: part.width, h: part.height, jpg: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)) };
-    });
+    const pages = pick.parts.map(([y0, y1]) => slice(canvas, y0, y1));
     saveBlob(`${filename}.pdf`, pdfFromImages(pages, pick.pw, pick.ph, margin, pick.fit));
   } catch (err) {
     toast(`PDF 저장 실패: ${err.message}`, true);
   }
 }
 
+// 찍은 그림의 y0~y1 부분 → JPEG 한 쪽
+function slice(canvas, y0, y1) {
+  const W = canvas.width;
+  const part = document.createElement('canvas');
+  part.width = W;
+  part.height = Math.max(1, Math.min(canvas.height, y1) - y0);
+  const ctx = part.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, part.width, part.height);
+  ctx.drawImage(canvas, 0, y0, W, part.height, 0, 0, W, part.height);
+  const bin = atob(part.toDataURL('image/jpeg', 0.92).split(',')[1]);
+  return { w: part.width, h: part.height, jpg: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)) };
+}
+
+// 쪽마다 fit(배율)을 따로 줄 수 있다 (page.fit 없으면 공통 fit)
 function pdfFromImages(pages, pw, ph, margin, fit) {
   const enc = new TextEncoder();
   const parts = [];
@@ -186,8 +216,8 @@ function pdfFromImages(pages, pw, ph, margin, fit) {
   obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
   pages.forEach((p, i) => {
     const [pg, img, cs] = [3 + i * 3, 4 + i * 3, 5 + i * 3];
-    const w = p.w * fit;
-    const h = p.h * fit;
+    const w = p.w * (p.fit ?? fit);
+    const h = p.h * (p.fit ?? fit);
     const draw = enc.encode(`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${((pw - w) / 2).toFixed(2)} ${(ph - margin - h).toFixed(2)} cm /Im0 Do Q`);
     obj(pg, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${img} 0 R >> >> /Contents ${cs} 0 R >>`);
     obj(img, `<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpg.length} >>`, p.jpg);

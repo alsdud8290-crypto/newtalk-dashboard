@@ -33,7 +33,8 @@ export async function render(main, ctx) {
     </div>`;
   main.querySelector('#pd-pdf').addEventListener('click', async (e) => {
     e.target.disabled = true;
-    await downloadPdf(main.querySelector('#pd-export'), fileSafe(`생산팀_대시보드_${data?.period.label || ''}_${stamp()}`), { maxPages: 2 });
+    // A4 가로로 여러 쪽: 카드 사이에서만 나누고, 스크롤로 잘린 표(납기 임박 등)는 끝까지 펼쳐서 찍는다
+    await downloadPdf(main.querySelector('#pd-export'), fileSafe(`생산팀_대시보드_${data?.period.label || ''}_${stamp()}`), { paged: true, expandTables: true });
     e.target.disabled = false;
   });
 
@@ -357,12 +358,11 @@ export async function render(main, ctx) {
   bindCardMenus(main, { getData: cardData, prefix: '생산팀', label: () => data?.period.label || '' });
 
   const dashUrl = (period) => `/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`;
-  // 엑셀·CSV: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
+  // 엑셀: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역 (대시보드 전체 CSV 내려받기는 없앰 → [PDF로 저장])
   bindPeriodDownload(main, 'pd-dl', {
     ...dlPeriod(), modes: ['year', 'quarter', 'month'], current: dlPeriod, currentYear: () => prodPeriod.year,
-    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로). 미출고는 오늘 기준입니다.',
+    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 엑셀 시트별로 담습니다. 미출고는 오늘 기준입니다. 화면 그대로는 [PDF로 저장]을 쓰세요.',
     onExcel: (period) => downloadFrom(dashUrl(period)),
-    onCsv: (period) => downloadFrom(`${dashUrl(period)}&format=csv`),
   });
   await periodSelector(main.querySelector('#pd-period'), load);
   await load();

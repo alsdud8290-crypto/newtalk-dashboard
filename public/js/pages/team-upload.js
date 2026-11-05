@@ -12,6 +12,10 @@ const UPLOADS = {
     tips: ['위쪽 작성방법·두 줄 제목은 자동으로 건너뜁니다 ("일련번호" 제목 칸을 찾아 그 아래부터).', '일련번호·모델명·검사번호의 앞부분(N8226, NTI-, NTK26)은 셀 표시 형식에서 읽습니다.',
       '일련번호가 없는 행(오른쪽 숫자만 있는 행)은 제외합니다.', '같은 파일에 같은 일련번호가 여러 번 나오면 마지막 행 기준입니다.'],
   },
+  sales_order_excel: {
+    title: '수주내역', team: 'production', accept: '.xlsx', done: '#/production/orders', doneLabel: '수주 내역에서 확인', skippedLabel: '판매번호·품명이 모두 빈 행',
+    sub: '수주내역 시트를 판매번호·제품 단위로 읽습니다. 같은 판매번호·품목 순번이 이미 있으면 새 값으로 덮어씁니다(바뀐 칸 표시).', tips: [],
+  },
   sales_order_pdf: {
     title: '수주서 PDF 업로드', team: 'production', accept: '.pdf',
     sub: '수주서 PDF(1쪽 = 수주서 1건)를 올리면 판매정보와 제품정보를 읽습니다. 확인 표는 제품 1개 = 1행이고, 같은 판매번호가 이미 있으면 건너뜁니다.',
@@ -67,9 +71,10 @@ export async function render(main, ctx) {
 }
 
 // 업로드 → 확인 → 저장 화면을 body 안에 그린다. heading 을 주면 파일 선택 카드에 제목·설명을 붙인다 (다른 화면 위에 넣을 때)
-export function mountUpload(body, kind, { heading = '' } = {}) {
+//  batch 를 주면 이미 읽은 업로드의 확인 화면부터, onReset 을 주면 [다른 파일 올리기]를 그 함수가 맡는다 (생산 데이터 업로드)
+export function mountUpload(body, kind, { heading = '', batch: initial = null, onReset = null } = {}) {
   const conf = UPLOADS[kind];
-  let batch = null;
+  let batch = initial;
   let filter = 'all';
   const edits = {}; // { rowId: { values: {...}, excluded } } — [다시 검사]·[저장] 때 보냄
 
@@ -168,7 +173,7 @@ export function mountUpload(body, kind, { heading = '' } = {}) {
           }).join('')}</tbody></table></div>`}
       </div>`;
 
-    body.querySelector('#tu-new')?.addEventListener('click', () => { batch = null; drawPicker(); });
+    body.querySelector('#tu-new')?.addEventListener('click', () => { if (onReset) { onReset(); return; } batch = null; drawPicker(); });
     body.querySelector('#tu-filter').addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (b) { filter = b.dataset.f; drawReview(); } });
     const table = body.querySelector('.review');
     table?.addEventListener('input', (e) => {
@@ -219,15 +224,84 @@ export function mountUpload(body, kind, { heading = '' } = {}) {
     }
   }
 
-  drawPicker();
+  if (batch) drawReview(); else drawPicker();
 }
+
+// ---------------- 생산 데이터 업로드 (제조내역 + 수주내역을 엑셀 한 파일로) ----------------
+//  같은 파일을 두 규칙으로 읽는다: "일련번호" 제목이 있는 시트 = 제조내역, "판매번호·품명·수량" 제목이 있는 시트 = 수주내역
+//  찾은 쪽마다 확인 표가 하나씩 나오고 각각 저장한다 (둘 다 같은 번호가 있으면 덮어씀). 수주서 PDF는 아래 [수주서 PDF]에서 지금처럼
+const PROD_PARTS = [['sales_order_excel', '수주내역'], ['manufacturing_excel', '제조내역']];
+const PROD_TABS = [['excel', '엑셀 (수주내역 · 제조내역)'], ['pdf', '수주서 PDF']];
+export const productionUpload = {
+  async render(main, ctx) {
+    let tab = ctx.tab === 'pdf' ? 'pdf' : 'excel';
+    main.innerHTML = `
+      <div class="page-head"><div><h2>생산 데이터 업로드</h2><div class="sub">엑셀 한 파일을 올리면 수주내역과 제조내역을 시트 제목으로 구분해 각각 확인·저장합니다. 같은 데이터가 이미 있으면 새 값으로 덮어씁니다.</div></div>
+        <div class="filters"><a class="btn" href="#/production/uploads">업로드 이력</a></div></div>
+      <div class="seg" id="pu-tab" style="margin-bottom:12px">${PROD_TABS.map(([k, l]) => `<button type="button" data-t="${k}">${l}</button>`).join('')}</div>
+      <div id="pu-body"></div>`;
+    const body = main.querySelector('#pu-body');
+    const tabs = main.querySelector('#pu-tab');
+    const show = () => {
+      tabs.querySelectorAll('[data-t]').forEach((b) => b.classList.toggle('on', b.dataset.t === tab));
+      if (tab === 'pdf') mountUpload(body, 'sales_order_pdf', { heading: '수주서 PDF 업로드' });
+      else picker();
+    };
+    tabs.addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b && b.dataset.t !== tab) { tab = b.dataset.t; show(); } });
+
+    function picker(message = '') {
+      body.innerHTML = `${message}
+        <div class="card" style="margin-bottom:16px">
+          <label class="dropzone" id="pu-drop"><input type="file" id="pu-file" accept=".xlsx" hidden>
+            <div style="font-size:15px;font-weight:600;margin-bottom:4px">생산 데이터 엑셀을 여기에 끌어다 놓거나 클릭해서 선택</div>
+            <div class="hint">.xlsx · 10MB 이하 · 올리면 바로 저장되지 않고 수주내역·제조내역 확인 화면이 나옵니다</div></label>
+          <ul class="hint tips">${[
+            '시트마다 제목 칸을 보고 구분합니다: "일련번호" 제목이 있는 시트 = 제조내역, "판매번호·품명(제품정보-품명)·수량" 제목이 있는 시트 = 수주내역.',
+            '수주내역 시트가 없으면 제조내역 행을 판매번호(#26024)별로 묶어 수주내역을 만듭니다 — 제품 = 모델명·전원·rpm·부시 가공별 대수, 판매처·사업명·납기일 = 그 판매번호의 첫 행, 산업 분야 = 기타.',
+            '제조내역: 같은 일련번호가 이미 있으면 새 값으로 덮어씁니다. 출고일 칸이 비어 있으면 납기 캘린더에서 체크·입력한 출고일은 지우지 않습니다. 날짜 칸의 날짜가 아닌 글자(예: 완제품입고)는 비고로 옮깁니다.',
+            '수주내역: 같은 판매번호가 이미 있으면 주문 정보와 제품(같은 순번)을 새 값으로 덮어씁니다. 한 수주의 둘째 제품 줄부터 비어 있는 주문 칸은 위 줄(같은 *ID) 값을 씁니다.',
+            '두 확인 표는 따로 저장합니다. 오류가 있는 행은 고치거나 제외해야 저장됩니다.',
+          ].map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+        </div>`;
+      const drop = body.querySelector('#pu-drop');
+      const input = body.querySelector('#pu-file');
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+      input.addEventListener('change', () => { if (input.files[0]) upload(input.files[0]); });
+    }
+
+    async function upload(file) {
+      if (!/\.xlsx$/i.test(file.name)) { picker('<div class="notice err">.xlsx 파일만 올릴 수 있습니다.</div>'); return; }
+      body.innerHTML = '<div class="card empty">파일을 읽는 중…</div>';
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      const b64 = btoa(bin);
+      const results = await Promise.allSettled(PROD_PARTS.map(([kind]) => api('/api/uploads', { method: 'POST', body: { kind, file_name: file.name, file: b64 } })));
+      const found = results.map((r, i) => [PROD_PARTS[i], r]).filter(([, r]) => r.status === 'fulfilled');
+      if (!found.length) {
+        picker(`<div class="notice err">수주내역·제조내역을 읽지 못했습니다.<br>${results.map((r, i) => `${PROD_PARTS[i][1]}: ${esc(r.reason?.message || '')}`).join('<br>')}</div>`);
+        return;
+      }
+      body.innerHTML = `
+        <div class="notice" style="margin-bottom:16px"><b>${esc(file.name)}</b> — ${results.map((r, i) => `${PROD_PARTS[i][1]} ${r.status === 'fulfilled' ? `<b>${r.value.summary.total}행</b>` : '<span class="muted">없음</span>'}`).join(' · ')}
+          <button class="btn sm" id="pu-again" style="margin-left:8px">다른 파일 올리기</button>
+          ${results.filter((r) => r.status === 'rejected').map((r) => `<div class="hint" style="margin-top:6px">${esc(r.reason?.message || '')}</div>`).join('')}</div>
+        ${found.map(([[kind, label]]) => `<h3 style="margin:18px 0 10px">${label}</h3><div data-part="${kind}"></div>`).join('')}`;
+      body.querySelector('#pu-again').addEventListener('click', () => picker());
+      for (const [[kind], r] of found) mountUpload(body.querySelector(`[data-part="${kind}"]`), kind, { batch: r.value, onReset: () => picker() });
+    }
+    show();
+  },
+};
 
 // ---------------- 업로드 이력 ----------------
 const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: '서비스팀', prices: '단가' };
 // 이력 화면 오른쪽 위: 그 팀의 업로드 화면으로 가는 버튼
 const UPLOAD_LINKS = {
   mgmt: [['#/upload', '경영 데이터 업로드']],
-  production: [['#/production/upload', '제조내역 업로드'], ['#/production/upload-orders', '수주서 업로드']],
+  production: [['#/production/upload', '생산 데이터 업로드']],
   service: [['#/service/reports/new', '출장보고서 입력']],
   prices: [['#/prices/upload', '부품 단가 데이터 업로드'], ['#/prices/new', '신규 부품 등록']],
 };

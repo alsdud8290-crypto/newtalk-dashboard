@@ -29,8 +29,9 @@ const ROUTES = {
   '/production/orders': { page: prodOrders, perm: 'production', title: '수주 내역' },
   '/production/serials': { page: prodSerials, perm: 'production', title: '일련번호 조회' },
   '/production/calendar': { page: prodCalendar, perm: 'production', title: '납기 캘린더' },
-  '/production/upload': { page: teamUpload, perm: 'production', edit: 'production', title: '제조내역 업로드', kind: 'manufacturing_excel' },
-  '/production/upload-orders': { page: teamUpload, perm: 'production', edit: 'production', title: '수주서 PDF 업로드', kind: 'sales_order_pdf' },
+  // 생산 데이터 업로드: 엑셀 한 파일 → 수주내역·제조내역 (예전 수주서 업로드 주소는 같은 화면의 [수주서 PDF]로)
+  '/production/upload': { page: teamUpload.productionUpload, perm: 'production', edit: 'production', title: '생산 데이터 업로드', tab: 'excel' },
+  '/production/upload-orders': { page: teamUpload.productionUpload, perm: 'production', edit: 'production', title: '생산 데이터 업로드', tab: 'pdf' },
   '/service/uploads': { page: teamUpload.history, perm: 'service', edit: 'service', title: '업로드 이력', team: 'service' },
   '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
   '/service': { page: servicePage, perm: 'service', title: '서비스팀 대시보드' },
@@ -69,8 +70,7 @@ const MENU = [
     ['/production/orders', '수주 내역'],
     ['/production/serials', '일련번호 조회'],
     ['/production/calendar', '납기 캘린더'],
-    ['/production/upload', '제조내역 업로드'],
-    ['/production/upload-orders', '수주서 업로드'],
+    ['/production/upload', '생산 데이터 업로드'],
     ['/production/uploads', '업로드 이력'],
   ] },
   { type: 'group', label: '서비스', icon: 'service', perm: 'service', items: [

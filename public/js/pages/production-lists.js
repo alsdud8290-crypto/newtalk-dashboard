@@ -109,7 +109,7 @@ export const orders = {
     }
     function draw() {
       $('#ol-count').textContent = `수주서 ${d.counts.total}건 · 수량 ${qty(d.counts.quantity)}`;
-      $('#ol-table').innerHTML = !d.results.length ? '<div class="empty">조건에 맞는 수주서가 없습니다. 수주서 PDF 업로드는 다음 단계에서 옮겨 옵니다.</div>' : `
+      $('#ol-table').innerHTML = !d.results.length ? '<div class="empty">조건에 맞는 수주서가 없습니다. 생산 데이터 업로드에서 수주내역 엑셀이나 수주서 PDF로 넣을 수 있습니다.</div>' : `
         <div class="table-wrap"><table class="tbl click">
           <thead><tr><th>납기일</th><th>판매번호</th><th>수주서류</th><th>수주일</th><th>산업 분야</th><th>판매처</th><th>사업명</th><th>제품 × 수량</th><th class="r">수량</th></tr></thead>
           <tbody>${d.results.map((o) => `<tr data-o="${esc(o.sales_no)}" class="${open === o.sales_no ? 'sel' : ''}">

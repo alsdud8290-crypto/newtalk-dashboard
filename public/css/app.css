@@ -531,6 +531,14 @@ b.big { font-size: 20px; }
 .cal-ev.done { background: var(--surface-3); color: var(--text-3); opacity: .75; }
 .cal-ev.hl { outline: 2px solid var(--orange); outline-offset: -1px; }
 .cal-more { font-size: 11px; color: var(--text-3); }
+/* 납기 캘린더 출고 체크박스 (항목 왼쪽) */
+.cal-ev { display: flex; align-items: center; gap: 4px; }
+.cal-ev .ev-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ship-chk { width: 14px; height: 14px; margin: 0; flex: none; cursor: pointer; accent-color: var(--navy); }
+.ship-chk:disabled { cursor: default; }
+.cal-cell:focus-visible { outline: 2px solid var(--navy); outline-offset: 1px; }
+/* PDF로 저장하는 동안 스크롤로 잘린 표를 끝까지 펼침 (downloadPdf의 expandTables) */
+.pdf-expand .table-wrap { max-height: none !important; overflow: visible !important; }
 .cal-legend { gap: 6px; }
 /* 업로드 확인 표 */
 .tips { margin: 14px 0 0; padding-left: 18px; line-height: 1.8; }
