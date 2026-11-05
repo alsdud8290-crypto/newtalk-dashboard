@@ -293,7 +293,14 @@ function cleanSale(b) {
   return [date(b.date, '일자'), customer, industry, str(b.series), salesType, num(b.amount), str(b.note)];
 }
 
+// 조회: from·to('YYYY-MM', 기간 조회) 또는 year
 mgmt.get('/sales', wrap(async (req, res) => {
+  const ym = /^\d{4}-(0[1-9]|1[0-2])$/;
+  if (req.query.from || req.query.to) {
+    const { from, to } = req.query;
+    if (!ym.test(from || '') || !ym.test(to || '') || from > to) throw new HttpError(400, '기간은 시작월 ≤ 종료월(YYYY-MM)이어야 합니다.');
+    return res.json(await db.all('SELECT * FROM sales WHERE substr(date,1,7) BETWEEN ? AND ? ORDER BY date DESC, id DESC', from, to));
+  }
   const year = intParam(req.query.year, 2000, 2100, '연도');
   res.json(await db.all('SELECT * FROM sales WHERE substr(date,1,4) = ? ORDER BY date DESC, id DESC', String(year)));
 }));
@@ -475,7 +482,7 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
   const like = (fields) => (r) => !q || fields.map((f) => String(r[f] ?? '')).join(' ').toLowerCase().includes(q);
-  const sales = async () => (await src.sales()).filter(like(['customer', 'series', 'note']));
+  const sales = async () => (await src.sales()).filter(like(['customer', 'series', 'note', 'project', 'order_no', 'end_client']));
   const receivables = async () => (await db.all(`SELECT * FROM receivables ${req.query.open === '1' ? 'WHERE amount - collected > 0.5' : ''} ORDER BY invoice_date, id`))
     .filter(like(['customer']));
   const scopeName = sc ? sc.label.replace(/\s/g, '') : '전체';

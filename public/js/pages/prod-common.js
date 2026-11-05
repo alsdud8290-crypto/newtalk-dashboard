@@ -1,5 +1,6 @@
-// 생산팀 화면 공통: 기간 선택(당월·분기·연간 — 생산팀 화면끼리 같이 씀), 납기 처리 상태 표시, D-day
+// 생산팀 화면 공통: 기간 선택(월·분기·연간·기간 — 생산·서비스 화면끼리 같이 씀), 납기 처리 상태 표시, D-day
 import { api, esc } from '../core.js';
+import { periodControl } from '../period-control.js';
 
 const now = new Date();
 const quarterOf = (m) => Math.floor((m - 1) / 3) + 1;
@@ -16,11 +17,21 @@ export function periodQS(p = prodPeriod) {
   const qs = new URLSearchParams({ year: p.year, period: p.kind });
   if (p.kind === 'month') qs.set('month', p.month);
   if (p.kind === 'quarter') qs.set('quarter', p.quarter);
+  if (p.kind === 'range') { qs.set('from', p.from); qs.set('to', p.to); }
   return qs.toString();
+}
+// 내려받기 창에서 고른 기간 글자('2026' · '2026-Q3' · '2026-09') → 목록 조회와 같은 쿼리
+export function pickQS(v) {
+  const m = /^(\d{4})(?:-Q(\d)|-(\d{2}))?$/.exec(v || '');
+  if (!m) return periodQS();
+  return periodQS({ year: +m[1], kind: m[2] ? 'quarter' : m[3] ? 'month' : 'year', quarter: +m[2] || 1, month: +m[3] || 1 });
 }
 
 // 내려받기 창의 처음 값 = 화면에서 고른 기간
-export const dlPeriod = () => ({ year: prodPeriod.year, mode: prodPeriod.kind, month: prodPeriod.month, quarter: prodPeriod.quarter });
+//  화면이 '기간'이면 끝나는 해 연간으로 시작
+export const dlPeriod = () => (prodPeriod.kind === 'range'
+  ? { year: +prodPeriod.to.slice(0, 4), mode: 'year' }
+  : { year: prodPeriod.year, mode: prodPeriod.kind, month: prodPeriod.month, quarter: prodPeriod.quarter });
 
 // 연도 목록: 데이터가 있는 가장 이른 연도(없으면 3년 전) ~ 내년
 let earliest = null;
@@ -31,33 +42,10 @@ async function yearList() {
   return Array.from({ length: y + 1 - from + 1 }, (_, i) => y + 1 - i);
 }
 
-// 기간 선택 영역: 연도 + [당월/분기/연간] + (당월) 월 / (분기) 분기
+// 기간 선택 영역 (경영 대시보드와 같은 모양): 연도 + [월/분기/연간/기간] + 월·분기 / 시작월~종료월
 export async function periodSelector(slot, onChange) {
   const years = await yearList();
-  const p = prodPeriod;
-  const draw = () => {
-    slot.innerHTML = `<div class="filters">
-      <select class="input" data-ps="year">${years.map((y) => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}년</option>`).join('')}</select>
-      <div class="seg">${[['month', '당월'], ['quarter', '분기'], ['year', '연간']].map(([v, l]) => `<button type="button" data-kind="${v}" class="${p.kind === v ? 'on' : ''}">${l}</button>`).join('')}</div>
-      ${p.kind === 'month' ? `<select class="input" data-ps="month">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === p.month ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>` : ''}
-      ${p.kind === 'quarter' ? `<select class="input" data-ps="quarter">${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === p.quarter ? 'selected' : ''}>${q}분기</option>`).join('')}</select>` : ''}
-    </div>`;
-  };
-  draw();
-  slot.addEventListener('change', (e) => {
-    const k = e.target.dataset.ps;
-    if (!k) return;
-    setProdPeriod({ [k]: Number(e.target.value) });
-    onChange();
-  });
-  slot.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-kind]');
-    if (!b || b.dataset.kind === p.kind) return;
-    setProdPeriod({ kind: b.dataset.kind });
-    draw();
-    onChange();
-  });
-  return { redraw: draw };
+  return periodControl(slot, prodPeriod, { years, onChange: () => { setProdPeriod({}); onChange(); } });
 }
 
 // 납기 처리 상태 (출고일로 판단). 색만으로 구분하지 않도록 기호와 글자를 함께 붙인다

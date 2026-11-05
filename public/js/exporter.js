@@ -122,9 +122,11 @@ export async function downloadPdf(el, filename, { maxPages = 1 } = {}) {
     let canvas;
     let cuts;
     try {
+      // 나눌 수 있는 곳 = 어떤 카드의 아래쪽이면서 그 높이를 가로지르는 다른 카드가 없는 곳
       const top = el.getBoundingClientRect().top;
-      const blocks = [...el.children].flatMap((c) => (c.classList.contains('section-block') ? [...c.children] : [c]));
-      cuts = blocks.map((n) => Math.round((n.getBoundingClientRect().bottom - top) * scale));
+      const boxes = [...el.querySelectorAll('.card, .notice, .section-title')].map((n) => n.getBoundingClientRect());
+      cuts = boxes.map((r) => r.bottom).filter((y) => !boxes.some((r) => r.top < y - 1 && r.bottom > y + 1))
+        .map((y) => Math.round((y - top) * scale));
       canvas = await html2canvas(el, {
         backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
         scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
@@ -265,29 +267,30 @@ export function bindPeriodPicker(el, onChange = () => {}) {
 
 // 페이지 머리의 [⬇ 내려받기] → 기간 고르고 엑셀/CSV
 //   opts: { years, year, mode, modes, month, quarter, hint, currentYear(), onExcel(period, label), onCsv(period, label) } — onCsv가 없으면 엑셀만
-export const periodDownloadButton = (id) => `<span class="dl-menu pd" id="${id}"><button type="button" class="btn" data-pd-open aria-haspopup="true">⬇ 내려받기</button></span>`;
+export const periodDownloadButton = (id, cls = '') => `<span class="dl-menu pd" id="${id}"><button type="button" class="btn ${cls}" data-pd-open aria-haspopup="true">⬇ 내려받기</button></span>`;
 export function bindPeriodDownload(root, id, opts) {
   const wrap = root.querySelector(`#${id}`);
   const pop = document.createElement('div');
   pop.className = 'pd-pop';
   pop.hidden = true;
-  pop.innerHTML = `<div class="pd-title">기간을 골라 내려받기</div>
-    ${periodPickerHtml(opts)}
+  // noPeriod: 기간과 관계없는 자료(단가표 등) — 기간 고르기 없이 엑셀·CSV만
+  pop.innerHTML = `<div class="pd-title">${opts.noPeriod ? '내려받기' : '기간을 골라 내려받기'}</div>
+    ${opts.noPeriod ? '' : periodPickerHtml(opts)}
     ${opts.hint ? `<div class="pd-hint">${opts.hint}</div>` : ''}
     <div class="pd-actions"><button type="button" class="btn brand" data-pd="xlsx">⬇ 엑셀</button>${opts.onCsv ? '<button type="button" class="btn" data-pd="csv">⬇ CSV</button>' : ''}</div>`;
   wrap.appendChild(pop);
-  const picker = bindPeriodPicker(pop.querySelector('.pp'));
+  const picker = opts.noPeriod ? { period: () => '', label: () => '' } : bindPeriodPicker(pop.querySelector('.pp'));
   const close = (e) => { if (!wrap.contains(e.target)) { pop.hidden = true; document.removeEventListener('click', close); } };
   wrap.querySelector('[data-pd-open]').addEventListener('click', () => {
     // 화면에서 고른 연도를 기본값으로
     const ySel = pop.querySelector('[data-pp="y"]');
     const cy = opts.currentYear?.();
-    if (pop.hidden && cy && ySel.value !== String(cy)) {
+    if (pop.hidden && cy && ySel && ySel.value !== String(cy)) {
       if (![...ySel.options].some((o) => o.value === String(cy))) ySel.add(new Option(`${cy}년`, cy));
       ySel.value = String(cy);
     }
     // 화면에서 고른 보기·월·분기도 그대로 (opts.current() → { mode, month, quarter })
-    const cur = pop.hidden && opts.current?.();
+    const cur = pop.hidden && !opts.noPeriod && opts.current?.();
     if (cur) {
       if (cur.month) pop.querySelector('[data-pp="m"]').value = String(cur.month);
       if (cur.quarter) pop.querySelector('[data-pp="q"]').value = String(cur.quarter);

@@ -1,7 +1,7 @@
 // 생산팀 대시보드 (ITB2026에서 옮겨 옴): 납기 임박(오늘 기준) + 생산 실적(목표 대비·비교) + 납기·출고 + 판매 실적
 import { api, esc, toast } from '../core.js';
 import { gauge, prodBars, donut, SERIES, OTHER, INDUSTRY_COLORS, ORDER_LINE, hideTooltip } from '../charts.js';
-import { periodDownloadButton, bindPeriodDownload, downloadFrom, addCardMenus, bindCardMenus } from '../exporter.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
 import { prodPeriod, setProdPeriod, periodQS, periodSelector, dlPeriod, statusChip, dDayChip, orderLabel, qty, dash } from './prod-common.js';
 
 const store = (key, def) => { try { return { ...def, ...JSON.parse(localStorage.getItem(key) || '{}') }; } catch { return { ...def }; } };
@@ -21,13 +21,21 @@ export async function render(main, ctx) {
   let salesData = null;
 
   main.innerHTML = `
-    <div id="pd-soon"></div>
     <div class="page-head">
       <div><h2>생산팀 대시보드</h2><div class="sub">생산 실적(제조년월 기준) · 납기·출고 · 판매 실적(수주서 제품 수량)</div></div>
-      <div class="filters"><div id="pd-period"></div>${periodDownloadButton('pd-dl')}</div>
+      <div class="filters"><div id="pd-period"></div>
+        <button type="button" class="btn" id="pd-pdf" title="대시보드 전체를 PDF로 저장">⬇ PDF로 저장</button>${periodDownloadButton('pd-dl')}</div>
     </div>
-    <div id="pd-body"><div class="empty">불러오는 중…</div></div>
-    <div id="pd-sales"></div>`;
+    <div id="pd-export">
+      <div id="pd-soon"></div>
+      <div id="pd-body"><div class="empty">불러오는 중…</div></div>
+      <div id="pd-sales"></div>
+    </div>`;
+  main.querySelector('#pd-pdf').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    await downloadPdf(main.querySelector('#pd-export'), fileSafe(`생산팀_대시보드_${data?.period.label || ''}_${stamp()}`), { maxPages: 2 });
+    e.target.disabled = false;
+  });
 
   // ---------- 납기 임박 (기간 선택과 관계없이 오늘 기준) ----------
   api('/api/production/due-soon').then((d) => {
@@ -61,8 +69,9 @@ export async function render(main, ctx) {
 
   function barsData() {
     const months = data.monthly.months;
-    const sel = data.period.months;
-    const thisYear = Number(data.period.start.slice(0, 4)) === new Date().getFullYear();
+    // 막대 그래프는 기간이 끝나는 해 1~12월 → 그 해에 든 달만 진하게
+    const sel = data.period.yms.filter((v) => v.startsWith(data.period.end.slice(0, 4))).map((v) => Number(v.slice(5)));
+    const thisYear = Number(data.period.end.slice(0, 4)) === new Date().getFullYear();
     const thisMonth = new Date().getMonth() + 1;
     if (view.barUnit === 'month') {
       return months.map((m) => ({ value: m.month, label: `${m.month}월`, actual: m.actual, orders: m.orders, lastYear: m.last_year, selected: sel.includes(m.month), inProgress: thisYear && m.month === thisMonth }));
@@ -126,7 +135,7 @@ export async function render(main, ctx) {
               </span>
             </div>
             <div class="chart-box" style="height:250px"><canvas id="pd-bars"></canvas></div>
-            <p class="hint" style="margin:4px 0 0">${data.period.start.slice(0, 4)}년 · 선택한 기간은 진하게, 막대를 누르면 그 기간 제조내역 목록</p>
+            <p class="hint" style="margin:4px 0 0">${data.period.end.slice(0, 4)}년 · 선택한 기간은 진하게, 막대를 누르면 그 기간 제조내역 목록</p>
           </div>
         </div>
         ${pr.annual_target === null ? '<div class="notice warn" style="margin:14px 0 0">연간 목표 생산량이 없어 달성률·부족치를 계산할 수 없습니다.</div>' : ''}
@@ -182,7 +191,7 @@ export async function render(main, ctx) {
     else charts.push(gauge(main.querySelector('#pd-gauge'), 0, 0));
     charts.push(prodBars(main.querySelector('#pd-bars'), barsData(), {
       target: bt, targetName, unitName, showOrders: view.showOrders, showLastYear: view.compare !== 'none',
-      onSelect: (v) => { setProdPeriod(view.barUnit === 'month' ? { kind: 'month', month: v } : { kind: 'quarter', quarter: v }); location.hash = '#/production/records'; },
+      onSelect: (v) => { setProdPeriod({ year: Number(data.period.end.slice(0, 4)), ...(view.barUnit === 'month' ? { kind: 'month', month: v } : { kind: 'quarter', quarter: v }) }); location.hash = '#/production/records'; },
     }));
     if (data.by_model.length) {
       charts.push(donut(main.querySelector('#pd-model'), main.querySelector('#pd-model-legend'), data.by_model.map((m) => ({ label: m.name, value: m.quantity })), modelColor,
@@ -194,14 +203,14 @@ export async function render(main, ctx) {
     const drawTarget = (editing) => {
       const t0 = data.production.annual_target;
       tslot.innerHTML = editing
-        ? `<form class="filters" id="pd-tform"><span class="hint">${data.period.start.slice(0, 4)}년 연간 목표</span><input class="input" name="v" type="number" min="0" required value="${t0 ?? ''}" style="width:110px"><button class="btn primary sm">저장</button><button type="button" class="btn sm" id="pd-tcancel">취소</button></form>`
-        : `<span class="hint">${data.period.start.slice(0, 4)}년 연간 목표 생산량 <b>${t0 === null ? '미입력' : qty(t0)}</b></span>${editable ? ` <button class="btn sm" id="pd-tedit">${t0 === null ? '목표 입력' : '목표 수정'}</button>` : ''}`;
+        ? `<form class="filters" id="pd-tform"><span class="hint">${data.period.end.slice(0, 4)}년 연간 목표</span><input class="input" name="v" type="number" min="0" required value="${t0 ?? ''}" style="width:110px"><button class="btn primary sm">저장</button><button type="button" class="btn sm" id="pd-tcancel">취소</button></form>`
+        : `<span class="hint">${data.period.end.slice(0, 4)}년 연간 목표 생산량 <b>${t0 === null ? '미입력' : qty(t0)}</b></span>${editable ? ` <button class="btn sm" id="pd-tedit">${t0 === null ? '목표 입력' : '목표 수정'}</button>` : ''}`;
       tslot.querySelector('#pd-tedit')?.addEventListener('click', () => drawTarget(true));
       tslot.querySelector('#pd-tcancel')?.addEventListener('click', () => drawTarget(false));
       tslot.querySelector('#pd-tform')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         try {
-          await api(`/api/production/targets/${data.period.start.slice(0, 4)}`, { method: 'PUT', body: { target_quantity: e.target.v.value } });
+          await api(`/api/production/targets/${data.period.end.slice(0, 4)}`, { method: 'PUT', body: { target_quantity: e.target.v.value } });
           toast('연간 목표 생산량을 저장했습니다.');
           load();
         } catch (err) { toast(err.message, true); }
@@ -310,7 +319,7 @@ export async function render(main, ctx) {
       return { name: '생산실적', aoa: [
         ...section(`${label} 생산 실적`, ['항목', '값'], [['생산량(대)', pr.actual], ['기간 목표(대)', pr.period_target ?? ''], ['달성률(%)', pr.achievement_rate ?? ''], ['부족치(대)', pr.shortfall ?? ''],
           ...(data.compare ? [[`${data.compare.label} 생산량(대)`, data.compare.actual], ['증감(대)', data.compare.change]] : [])]),
-        ...section(`${data.period.start.slice(0, 4)}년 ${view.barUnit === 'month' ? '월별' : '분기별'} 생산`, [view.barUnit === 'month' ? '월' : '분기', '생산량(대)', '수주량(대)', view.barUnit === 'month' ? '월 목표(대)' : '분기 목표(대)', ...(view.compare !== 'none' ? ['전년(대)'] : [])],
+        ...section(`${data.period.end.slice(0, 4)}년 ${view.barUnit === 'month' ? '월별' : '분기별'} 생산`, [view.barUnit === 'month' ? '월' : '분기', '생산량(대)', '수주량(대)', view.barUnit === 'month' ? '월 목표(대)' : '분기 목표(대)', ...(view.compare !== 'none' ? ['전년(대)'] : [])],
           bars.map((b) => [b.label, b.actual, b.orders, barTarget() ?? '', ...(view.compare !== 'none' ? [b.lastYear ?? 0] : [])])),
         ...section(`${yp.year}년 연간 목표 진행`, ['항목', '값'], [['연간 목표(대)', yp.annual_target ?? ''], ['누적(대)', yp.cumulative], ['남은 양(대)', yp.remaining ?? ''], ['월 평균 필요(대)', yp.required_per_month ?? ''], ['연말 예상(대, 예측)', yp.forecast ?? '']]),
         ...section(`${label} 모델별 생산`, ['모델', '생산량(대)', '비중(%)'], rankRows(data.by_model)),
@@ -350,7 +359,7 @@ export async function render(main, ctx) {
   const dashUrl = (period) => `/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`;
   // 엑셀·CSV: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역
   bindPeriodDownload(main, 'pd-dl', {
-    ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
+    ...dlPeriod(), modes: ['year', 'quarter', 'month'], current: dlPeriod, currentYear: () => prodPeriod.year,
     hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로). 미출고는 오늘 기준입니다.',
     onExcel: (period) => downloadFrom(dashUrl(period)),
     onCsv: (period) => downloadFrom(`${dashUrl(period)}&format=csv`),

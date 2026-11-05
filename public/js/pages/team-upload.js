@@ -221,12 +221,13 @@ export function mountUpload(body, kind, { heading = '' } = {}) {
 }
 
 // ---------------- 업로드 이력 ----------------
-const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: '서비스팀' };
+const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: '서비스팀', prices: '단가' };
 // 이력 화면 오른쪽 위: 그 팀의 업로드 화면으로 가는 버튼
 const UPLOAD_LINKS = {
   mgmt: [['#/upload', '경영 데이터 업로드']],
   production: [['#/production/upload', '제조내역 업로드'], ['#/production/upload-orders', '수주서 업로드']],
-  service: [['#/service/reports/new', '출장보고서 입력'], ['#/prices/upload', '부품 단가 데이터 업로드'], ['#/prices/new', '신규 부품 등록']],
+  service: [['#/service/reports/new', '출장보고서 입력']],
+  prices: [['#/prices/upload', '부품 단가 데이터 업로드'], ['#/prices/new', '신규 부품 등록']],
 };
 export const history = {
   async render(main, ctx) {

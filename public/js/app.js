@@ -40,6 +40,7 @@ const ROUTES = {
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
   '/prices/upload': { page: partPrices, perm: PART_PERMS, edit: 'service', title: '부품 단가 데이터 업로드', tab: 'upload' },
   '/prices/new': { page: partPrices, perm: PART_PERMS, edit: 'service', title: '신규 부품 등록', tab: 'new' },
+  '/prices/uploads': { page: teamUpload.history, perm: PART_PERMS, edit: 'service', title: '업로드 이력', team: 'prices' },
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
 };
 
@@ -84,6 +85,7 @@ const MENU = [
     ['/prices/companies', '출장지별 비교'],
     ['/prices/upload', '부품 단가 데이터 업로드'],
     ['/prices/new', '신규 부품 등록'],
+    ['/prices/uploads', '업로드 이력'],
   ] },
   { type: 'item', href: '/admin/users', label: '관리자', icon: 'admin', perm: 'admin' },
 ];
@@ -93,8 +95,8 @@ const canEdit = (team) => !!state.user?.perms?.[`edit_${team}`];
 const canOpen = (href) => { const r = ROUTES[href]; return !r || (can(r.perm) && (!r.edit || canEdit(r.edit))); };
 const firstAllowed = () => Object.keys(ROUTES).find(canOpen);
 
-// 화면 위 탭 (단가 화면처럼): 경영지원·생산·서비스 묶음의 다른 메뉴로 바로 이동. 경영지원 묶음 앞에는 경영 대시보드
-const TAB_GROUPS = MENU.filter((g) => g.type === 'group' && ['경영지원', '생산', '서비스'].includes(g.label))
+// 화면 위 탭: 경영지원·생산·서비스·단가 묶음의 다른 메뉴로 바로 이동. 경영지원 묶음 앞에는 경영 대시보드
+const TAB_GROUPS = MENU.filter((g) => g.type === 'group' && ['경영지원', '생산', '서비스', '단가'].includes(g.label))
   .map((g) => (g.label === '경영지원' ? [['/dashboard', '경영 대시보드'], ...g.items] : g.items));
 function pageTabs(target) {
   const items = TAB_GROUPS.find((list) => list.some(([href]) => href === target))?.filter(([href]) => canOpen(href));

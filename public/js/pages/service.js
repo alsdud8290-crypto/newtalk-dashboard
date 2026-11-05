@@ -4,7 +4,7 @@
 import { api, esc, toast, today } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip } from '../korea-map.js';
-import { periodDownloadButton, bindPeriodDownload, downloadFrom, addCardMenus, bindCardMenus } from '../exporter.js';
+import { periodDownloadButton, bindPeriodDownload, downloadFrom, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
 import { prodPeriod, periodQS, periodSelector, dlPeriod, dash } from './prod-common.js';
 import { mountUpload } from './team-upload.js';
 
@@ -32,9 +32,15 @@ export async function render(main) {
   main.innerHTML = `
     <div class="page-head">
       <div><h2>서비스팀 대시보드</h2><div class="sub">출장보고서 기준 · 출장 시작일로 기간에 넣음 (여러 날 출장도 1회)</div></div>
-      <div class="filters"><div id="sv-period"></div>${periodDownloadButton('sv-dl')}</div>
+      <div class="filters"><div id="sv-period"></div>
+        <button type="button" class="btn" id="sv-pdf" title="대시보드 전체를 PDF로 저장">⬇ PDF로 저장</button>${periodDownloadButton('sv-dl')}</div>
     </div>
     <div id="sv-body"><div class="empty">불러오는 중…</div></div>`;
+  main.querySelector('#sv-pdf').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    await downloadPdf(main.querySelector('#sv-body'), fileSafe(`서비스팀_대시보드_${data?.period.label || ''}_${stamp()}`), { maxPages: 2 });
+    e.target.disabled = false;
+  });
 
   async function load() {
     try {
@@ -67,7 +73,7 @@ export async function render(main) {
             <div class="donut-row"><div class="donut-box small"><canvas id="sv-paid"></canvas></div><div class="legend" id="sv-paid-legend"></div></div>
           </div>
           <div>
-            <div class="diff-legend"><span class="muted">${data.period.start.slice(0, 4)}년 월별 출장 횟수 (선택한 기간은 진하게)</span>
+            <div class="diff-legend"><span class="muted">${data.period.end.slice(0, 4)}년 월별 출장 횟수 (선택한 기간은 진하게)</span>
               ${['유상', '무상'].map((n) => `<span><i style="background:${paidColor(n)}"></i>${n}</span>`).join('')}</div>
             <div class="chart-box" style="height:250px"><canvas id="sv-monthly"></canvas></div>
           </div>
@@ -111,7 +117,7 @@ export async function render(main) {
 
     addCardMenus(main.querySelector('#sv-body'));
     charts.push(donut(main.querySelector('#sv-paid'), main.querySelector('#sv-paid-legend'), s.paid.map((p) => ({ label: p.name, value: p.quantity })), paidColor, { fmt: cnt }));
-    const hl = data.period.months.map((m) => m - 1);
+    const hl = data.period.yms.filter((v) => v.startsWith(data.period.end.slice(0, 4))).map((v) => Number(v.slice(5)) - 1);
     charts.push(countStack(main.querySelector('#sv-monthly'), s.monthly.map((m) => `${m.month}월`), [
       { label: '유상', data: s.monthly.map((m) => m.paid), color: paidColor('유상') },
       { label: '무상', data: s.monthly.map((m) => m.unpaid), color: paidColor('무상') },
@@ -136,7 +142,7 @@ export async function render(main) {
     switch (key) {
       case 'trips': return { name: '출장실적', aoa: [
         [`${label} 출장 실적`], ['항목', '횟수(회)'], ['출장 횟수', s.trip_count], ...s.paid.map((p) => [p.name, p.quantity]), [],
-        [`${data.period.start.slice(0, 4)}년 월별 출장`], ['월', '유상(회)', '무상(회)', '합계(회)'], ...s.monthly.map((m) => [`${m.month}월`, m.paid, m.unpaid, m.count])] };
+        [`${data.period.end.slice(0, 4)}년 월별 출장`], ['월', '유상(회)', '무상(회)', '합계(회)'], ...s.monthly.map((m) => [`${m.month}월`, m.paid, m.unpaid, m.count])] };
       case 'map':
       case 'regions': return { name: `지역별출장_${lv}`, aoa: [[lv, '횟수(회)', '비중(%)'], ...share(level === 'region' ? s.by_region : s.by_district)] };
       case 'parts': return { name: '교체부품순위', aoa: [['부품명', '사용 횟수(회)', '현재 단가(원)', '직전 대비(원)', '직전 대비(%)'],
@@ -149,7 +155,7 @@ export async function render(main) {
   bindCardMenus(main, { getData: cardData, prefix: '서비스팀', label: () => data?.period.label || '' });
 
   bindPeriodDownload(main, 'sv-dl', {
-    ...dlPeriod(), modes: ['month', 'quarter', 'year'], current: dlPeriod, currentYear: () => prodPeriod.year,
+    ...dlPeriod(), modes: ['year', 'quarter', 'month'], current: dlPeriod, currentYear: () => prodPeriod.year,
     hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·출장보고서 목록을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로).',
     onExcel: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}`),
     onCsv: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}&format=csv`),

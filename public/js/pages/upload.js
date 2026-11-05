@@ -1,4 +1,4 @@
-import { downloadCompany } from '../exporter.js';
+import { downloadCompany, downloadCsvZip, datasetSheet, DATASETS, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 import { api, esc, comma, toast } from '../core.js';
 
 // 시트 종류별 열 이름 별칭. 기존 엑셀의 열 이름이 달라도 아래 중 하나와 맞으면 인식한다.
@@ -170,7 +170,7 @@ export async function render(main, ctx) {
       <div><h2>경영 데이터 엑셀 업로드</h2><div class="sub">목표·월별실적·매출내역·미수금 엑셀, "경영지원 관리" 양식 파일을 한 번에 반영합니다.</div></div>
       <div class="filters">
         <button class="btn" id="u-tpl">⬇ 업로드 양식</button>
-        <button class="btn" id="u-full" title="지금 저장된 모든 경영지원 데이터를 경영지원 관리 양식 엑셀 한 파일로">⬇ 현재 데이터 전체</button>
+        ${periodDownloadButton('u-dl')}
         <a class="btn" href="#/mgmt/uploads">업로드 이력</a>
       </div>
     </div>
@@ -195,7 +195,16 @@ export async function render(main, ctx) {
 
   // 업로드 양식 = 내려받기 파일과 같은 회사 양식 서식의 빈 파일
   main.querySelector('#u-tpl').addEventListener('click', () => downloadCompany({ kind: 'template' }));
-  main.querySelector('#u-full').addEventListener('click', () => downloadCompany({ kind: 'full' }));
+  // 현재 데이터 내려받기: 전체 또는 고른 기간 — 엑셀은 회사 양식(다시 올리면 그 기간만 교체), CSV는 표마다 파일 하나씩 ZIP
+  bindPeriodDownload(main, 'u-dl', {
+    years: ctx.meta.years, mode: '', hint: '지금 저장된 경영지원 데이터(목표·월별 실적·매출 내역·미수금)를 담습니다. 엑셀은 그대로 다시 올릴 수 있습니다.',
+    onExcel: (p) => downloadCompany({ kind: 'full', period: p }),
+    onCsv: async (p, label) => {
+      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
+      await downloadCsvZip(fileSafe(`뉴토크코리아_경영데이터_${label}_${stamp()}_CSV`), ['targets', 'monthly', 'sales', 'receivables']
+        .filter((k) => d[k]?.length).map((k) => ({ name: DATASETS[k].sheet, sheet: datasetSheet(k, d[k]) })));
+    },
+  });
   const drop = main.querySelector('#u-drop');
   const input = main.querySelector('#u-file');
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });

@@ -1,5 +1,6 @@
-import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, yearOptions, today, VIEW_ONLY } from '../core.js';
+import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, today, VIEW_ONLY } from '../core.js';
 import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
+import { periodControl, periodRange, periodLabel } from '../period-control.js';
 
 // ---------- 매출자료 CSV (판매 관리 프로그램에서 받은 월별 파일, 예: 매출자료_202601.csv) ----------
 // 열: *ID, 작업 구분, 사업 구분, 수출 구분, 판매번호, 최종발주처 / EPC, 사업명, 판매처, 매출액. 날짜 열이 없어 기준월은 파일 이름에서 읽는다.
@@ -55,16 +56,15 @@ async function readSalesCsv(file) {
 }
 
 export async function render(main, ctx) {
-  let year = period.year;
-  // 조회 기간: 연간 / 분기 / 월 (이 브라우저에 기억). 연도별로 받아 화면에서 그 기간만 거름
+  // 조회 기간: 월 / 분기 / 연간 / 기간(시작월~종료월) — 이 브라우저에 기억
   const now = new Date();
   const view = (() => {
-    const base = { kind: 'year', month: now.getMonth() + 1, quarter: Math.ceil((now.getMonth() + 1) / 3) };
+    const base = { kind: 'year', year: period.year, month: now.getMonth() + 1, quarter: Math.ceil((now.getMonth() + 1) / 3) };
     try { return { ...base, ...JSON.parse(localStorage.getItem('sales.view') || '{}') }; } catch { return base; }
   })();
   const saveView = () => { try { localStorage.setItem('sales.view', JSON.stringify(view)); } catch { /* 무시 */ } };
-  const viewMonths = () => (view.kind === 'month' ? [view.month] : view.kind === 'quarter' ? [view.quarter * 3 - 2, view.quarter * 3 - 1, view.quarter * 3] : null);
-  const viewLabel = () => (view.kind === 'month' ? `${year}년 ${view.month}월` : view.kind === 'quarter' ? `${year}년 ${view.quarter}분기` : `${year}년`);
+  const viewLabel = () => periodLabel(view);
+  const dlStart = () => (view.kind === 'range' ? { mode: 'year', year: +view.to.slice(0, 4) } : { mode: view.kind, year: view.year, month: view.month, quarter: view.quarter });
   let rows = [];
   let filter = '';
   const searchText = (r) => `${r.customer} ${r.series} ${r.note} ${r.project || ''} ${r.order_no || ''} ${r.end_client || ''}`.toLowerCase();
@@ -74,10 +74,7 @@ export async function render(main, ctx) {
     <div class="page-head">
       <div><h2>매출 내역 (판매처별)</h2><div class="sub">산업 분야·제품 시리즈 비중 그래프와 판매처 순위의 기준 데이터입니다.</div></div>
       <div class="filters">
-        <select class="input" id="s-year">${yearOptions(year, ctx.meta.years)}</select>
-        <div class="seg" id="s-kind">${[['year', '연간'], ['quarter', '분기'], ['month', '월']].map(([v, l]) => `<button type="button" data-kind="${v}" class="${view.kind === v ? 'on' : ''}">${l}</button>`).join('')}</div>
-        <select class="input" id="s-quarter" ${view.kind === 'quarter' ? '' : 'hidden'}>${[1, 2, 3, 4].map((q) => `<option value="${q}" ${q === view.quarter ? 'selected' : ''}>${q}분기 (${q * 3 - 2}~${q * 3}월)</option>`).join('')}</select>
-        <select class="input" id="s-month" ${view.kind === 'month' ? '' : 'hidden'}>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === view.month ? 'selected' : ''}>${i + 1}월</option>`).join('')}</select>
+        <div id="s-period"></div>
         <input class="input" id="s-filter" placeholder="판매처·사업명·판매번호 검색" style="width:200px">
         ${periodDownloadButton('s-dl')}
         ${editable ? '<button class="btn primary" id="s-add">+ 매출 등록</button>' : ''}
@@ -120,8 +117,7 @@ export async function render(main, ctx) {
 
   function draw() {
     const q = filter.toLowerCase();
-    const ms = viewMonths();
-    const list = rows.filter((r) => (!ms || ms.includes(Number(r.date.slice(5, 7)))) && (!q || searchText(r).includes(q)));
+    const list = rows.filter((r) => !q || searchText(r).includes(q));
     const total = list.reduce((a, r) => a + r.amount, 0);
     main.querySelector('#s-table').innerHTML = list.length ? `
       <table class="tbl">
@@ -137,30 +133,19 @@ export async function render(main, ctx) {
   }
 
   async function load() {
-    rows = await api(`/api/mgmt/sales?year=${year}`);
+    const r = periodRange(view);
+    rows = await api(`/api/mgmt/sales?from=${r.from}&to=${r.to}`);
     draw();
   }
 
-  main.querySelector('#s-year').addEventListener('change', (e) => { year = Number(e.target.value); setPeriod({ year }); load(); });
-  main.querySelector('#s-kind').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-kind]');
-    if (!b || b.dataset.kind === view.kind) return;
-    view.kind = b.dataset.kind;
-    main.querySelectorAll('#s-kind [data-kind]').forEach((x) => x.classList.toggle('on', x === b));
-    main.querySelector('#s-quarter').hidden = view.kind !== 'quarter';
-    main.querySelector('#s-month').hidden = view.kind !== 'month';
-    saveView();
-    draw();
-  });
-  main.querySelector('#s-quarter').addEventListener('change', (e) => { view.quarter = Number(e.target.value); saveView(); draw(); });
-  main.querySelector('#s-month').addEventListener('change', (e) => { view.month = Number(e.target.value); saveView(); draw(); });
+  const ctl = periodControl(main.querySelector('#s-period'), view, { years: ctx.meta.years, onChange: () => { saveView(); if (view.kind !== 'range') setPeriod({ year: view.year }); load(); } });
   main.querySelector('#s-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
   main.querySelector('#s-add')?.addEventListener('click', () => edit(null));
   // 내려받기: 기간(월·분기·연간·전체)을 골라서, 검색어가 있으면 검색 결과만
   const match = (r) => !filter || searchText(r).includes(filter.toLowerCase());
   bindPeriodDownload(main, 's-dl', {
-    years: ctx.meta.years, year, mode: view.kind, month: view.month, quarter: view.quarter, currentYear: () => year,
-    current: () => ({ mode: view.kind, month: view.month, quarter: view.quarter }), // 내려받기 창은 화면에서 고른 기간으로 시작
+    years: ctx.meta.years, ...dlStart(), currentYear: () => dlStart().year,
+    current: dlStart, // 내려받기 창은 화면에서 고른 기간으로 시작
     hint: '검색어를 입력해 두면 검색 결과만 담깁니다.',
     onExcel: (p) => downloadCompany({ kind: 'sales', period: p, q: filter }),
     onCsv: async (p, label) => {
@@ -238,11 +223,13 @@ export async function render(main, ctx) {
         const body = { rows: files.flatMap((f) => f.rows.map((r) => ({ ...r, file: f.file.normalize('NFC'), date: `${f.month}-01`, note: '' }))) };
         const r = await api('/api/mgmt/sales/upsert', { method: 'POST', body });
         toast(`매출자료를 저장했습니다 — 새로 ${r.inserted}건, 덮어씀 ${r.updated}건`);
-        const y = Number(files.map((f) => f.month).sort().pop().slice(0, 4));
+        // 올린 달이 지금 보는 기간 밖이면 그 해 연간으로 바꿔 보여 준다
+        const lastMonth = files.map((f) => f.month).sort().pop();
+        const shown = periodRange(view);
         files = [];
         drawPicker();
         await ctx.reloadMeta();
-        if (y !== year) { year = y; setPeriod({ year }); main.querySelector('#s-year').innerHTML = yearOptions(year, ctx.meta.years); }
+        if (lastMonth < shown.from || lastMonth > shown.to) { Object.assign(view, { kind: 'year', year: +lastMonth.slice(0, 4) }); saveView(); ctl.redraw(); }
         await load();
       } catch (err) { toast(err.message, true); e.target.disabled = false; }
     });

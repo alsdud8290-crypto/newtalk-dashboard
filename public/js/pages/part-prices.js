@@ -6,7 +6,7 @@
 //  신규 부품 등록: 직접 입력(한 건) + 엑셀로 여러 건 (같은 파트넘버는 덮어씀)
 import { api, esc, toast, confirmBox, VIEW_ONLY } from '../core.js';
 import { diffBar, DIFF_ABOVE, DIFF_BELOW, hideTooltip } from '../charts.js';
-import { downloadFrom } from '../exporter.js';
+import { downloadFrom, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 import { mountUpload } from './team-upload.js';
 
 const wonText = (v) => (v === null || v === undefined ? '-' : `${Number(v).toLocaleString('ko-KR')}원`);
@@ -29,10 +29,6 @@ export async function render(main, ctx) {
   main.innerHTML = `
     <div class="page-head">
       <div><h2>교체부품 단가</h2><div class="sub">파트넘버별 뉴토크 기준값과 출장지(업체)별 단가를 비교합니다.</div></div>
-      ${editable ? '<div class="filters"><a class="btn" href="#/service/uploads">업로드 이력</a></div>' : ''}
-    </div>
-    <div class="tabs">
-      ${TABS.filter(([, , , edit]) => !edit || editable).map(([k, href, label]) => `<a href="${href}" class="${tab === k ? 'active' : ''}">${label}</a>`).join('')}
     </div>
     ${editable ? '' : VIEW_ONLY}
     <div id="pp-body"></div>`;
@@ -56,7 +52,7 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div class="ttl"><h3>파트넘버별 기준값 · 출장지 단가</h3><span class="hint" id="pp-count"></span></div>
-        <div class="filters"><button class="btn sm" id="pp-xlsx">⬇ 엑셀</button><button class="btn sm" id="pp-csv">⬇ CSV</button></div>
+        <div class="filters">${periodDownloadButton('pp-dl', 'sm')}</div>
       </div>
       <div class="filters" style="margin-bottom:12px">
         <form id="pp-search" class="filters"><input class="input" name="q" placeholder="파트넘버(예: 05-A-01, 0501) 또는 품목" style="width:280px"><button class="btn">검색</button></form>
@@ -84,8 +80,6 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
   function drawTable() {
     const n = data.items.length;
     $('#pp-count').textContent = `${n}개 부품 · 줄을 누르면 출장지별 단가`;
-    $('#pp-xlsx').disabled = !n;
-    $('#pp-csv').disabled = !n;
     $('#pp-table').innerHTML = !n
       ? `<div class="empty">${filters.q || filters.category ? '조건에 맞는 부품이 없습니다.' : '단가표가 없습니다. 신규 부품 등록이나 부품 단가 데이터 업로드로 넣어 주세요.'}</div>`
       : `<div class="table-wrap" style="max-height:60vh"><table class="tbl click">
@@ -192,8 +186,8 @@ async function renderParts(body, charts, destroyCharts, openId, editable) {
     if (td && e.target === td && (e.key === 'Enter' || e.key === 'F2')) { e.preventDefault(); editStd(td); }
   });
   const catalogUrl = () => `/api/parts/catalog/export?q=${encodeURIComponent(filters.q)}&category=${encodeURIComponent(filters.category)}`;
-  $('#pp-xlsx').addEventListener('click', () => downloadFrom(catalogUrl()));
-  $('#pp-csv').addEventListener('click', () => downloadFrom(`${catalogUrl()}&format=csv`));
+  bindPeriodDownload(body, 'pp-dl', { noPeriod: true, hint: '검색어·분류는 화면에서 고른 그대로 담습니다.',
+    onExcel: () => downloadFrom(catalogUrl()), onCsv: () => downloadFrom(`${catalogUrl()}&format=csv`) });
 
   await load();
   if (openId && !(detail && detail.id === Number(openId))) {
@@ -288,7 +282,7 @@ async function renderCompanies(body, charts, destroyCharts) {
         <div class="ttl"><h3>출장지별 단가 비교</h3><span class="hint">뉴토크 기준값 대비 평균 차이율</span></div>
         <div class="filters">
           <select class="input" id="pc-cat"><option value="">모든 분류</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
-          <button class="btn sm" id="pc-xlsx">⬇ 엑셀</button><button class="btn sm" id="pc-csv" title="업체 요약·부품별 차이 CSV 두 개를 ZIP 하나로">⬇ CSV</button>
+          ${periodDownloadButton('pc-dl', 'sm')}
         </div>
       </div>
       <div id="pc-main"></div>
@@ -304,8 +298,6 @@ async function renderCompanies(body, charts, destroyCharts) {
 
   function draw() {
     destroyCharts();
-    $('#pc-xlsx').disabled = !data.companies.length;
-    $('#pc-csv').disabled = !data.companies.length;
     $('#pc-main').innerHTML = !data.companies.length
       ? '<div class="empty">비교할 출장지 단가가 없습니다. 부품 단가 데이터 업로드의 "출장지별 단가"로 넣을 수 있습니다.</div>'
       : `${data.low_count ? `<div class="notice warn">${lowBadge('')} 뉴토크 기준값보다 <b>${data.low_alert_rate}% 이상 낮은</b> 견적이 <b>${data.low_count}건</b> 있습니다. 업체를 눌러 어떤 부품인지 확인하세요.</div>` : ''}
@@ -354,8 +346,9 @@ async function renderCompanies(body, charts, destroyCharts) {
   }
 
   $('#pc-cat').addEventListener('change', (e) => { category = e.target.value; load(); });
-  $('#pc-xlsx').addEventListener('click', () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}`));
-  $('#pc-csv').addEventListener('click', () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}&format=csv`));
+  bindPeriodDownload(body, 'pc-dl', { noPeriod: true, hint: '고른 분류의 업체 요약·부품별 차이를 담습니다 (CSV는 두 파일을 ZIP 하나로).',
+    onExcel: () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}`),
+    onCsv: () => downloadFrom(`/api/parts/companies/export?category=${encodeURIComponent(category)}&format=csv`) });
   $('#pc-main').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-c]'); if (tr) toggle(tr.dataset.c); });
   // 출장지별 비교에서 파트넘버를 누르면 부품별 비교로 가서 그 부품을 연다
   $('#pc-detail').addEventListener('click', (e) => { const a = e.target.closest('[data-open]'); if (a) sessionStorage.setItem('openPart', a.dataset.open); });
