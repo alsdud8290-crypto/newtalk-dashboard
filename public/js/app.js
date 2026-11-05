@@ -2,9 +2,7 @@ import { api, esc, modal, toast } from './core.js';
 import * as dashboard from './pages/dashboard.js';
 import * as monthly from './pages/monthly.js';
 import * as sales from './pages/sales.js';
-import * as receivables from './pages/receivables.js';
 import * as upload from './pages/upload.js';
-import * as exportPage from './pages/export.js';
 import * as users from './pages/users.js';
 import * as partPrices from './pages/part-prices.js';
 import * as production from './pages/production.js';
@@ -24,9 +22,7 @@ const ROUTES = {
   '/dashboard': { page: dashboard, perm: 'mgmt', title: '경영 현황' },
   '/input/monthly': { page: monthly, perm: 'mgmt', title: '월별 실적·목표' },
   '/input/sales': { page: sales, perm: 'mgmt', title: '매출 내역' },
-  '/input/receivables': { page: receivables, perm: 'mgmt', title: '미수금 관리' },
   '/upload': { page: upload, perm: 'mgmt', edit: 'mgmt', title: '경영 데이터 업로드' },
-  '/export': { page: exportPage, perm: 'mgmt', title: '데이터 내보내기' },
   '/mgmt/uploads': { page: teamUpload.history, perm: 'mgmt', edit: 'mgmt', title: '업로드 이력', team: 'mgmt' },
   '/production': { page: production, perm: 'production', title: '생산팀 대시보드' },
   '/production/records': { page: prodRecords, perm: 'production', title: '제조내역' },
@@ -63,9 +59,7 @@ const MENU = [
   { type: 'group', label: '경영지원', icon: 'mgmt', perm: 'mgmt', items: [
     ['/input/monthly', '월별 실적·목표 입력'],
     ['/input/sales', '매출 내역 (판매처)'],
-    ['/input/receivables', '미수금 관리'],
     ['/upload', '경영 데이터 업로드'],
-    ['/export', '데이터 내보내기'],
     ['/mgmt/uploads', '업로드 이력'],
   ] },
   { type: 'group', label: '생산', icon: 'production', perm: 'production', items: [
@@ -199,7 +193,7 @@ function changePassword(forced) {
 }
 
 // 없앤 화면의 옛 주소(즐겨찾기 등) → 옮겨 간 화면
-const MOVED = { '/service/upload': '/service/reports/new' };
+const MOVED = { '/service/upload': '/service/reports/new', '/input/receivables': '/input/monthly', '/export': '/upload' };
 
 async function route() {
   if (!state.user) return;

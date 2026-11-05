@@ -13,16 +13,19 @@ export const DATASETS = {
     cols: [
       ['year', '연도'], ['month', '월'],
       ['product_sales', '제품매출액', money], ['goods_sales', '상품매출액', money], ['service_sales', '용역매출액', money],
-      ['product_purchase', '상품매입액', money], ['material_purchase', '원재료매입액', money], ['expense', '경비지출액', money],
-      ['ad_expense', '광고선전비', money], ['entertainment_expense', '접대비', money], ['other_expense', '그외지출액', money],
+      ['non_op_income', '영업외수익', money],
+      ['product_purchase', '상품매입액', money], ['sga_expense', '판매비와관리비', money], ['non_op_expense', '영업외비용', money],
+      ['material_purchase', '원재료매입액', money], ['labor_cost', '노무비', money], ['expense', '경비', money],
+      ['receivables_total', '미수금총액', money],
       // 아래 합계 열은 참고용 (업로드 시에는 무시됨)
-      [(r) => n(r.product_sales) + n(r.goods_sales) + n(r.service_sales), '매출합계', money],
-      [(r) => n(r.product_purchase) + n(r.material_purchase) + n(r.expense) + n(r.ad_expense) + n(r.entertainment_expense) + n(r.other_expense), '지출합계', money],
+      [(r) => n(r.product_sales) + n(r.goods_sales) + n(r.service_sales) + n(r.non_op_income), '매출합계', money],
+      [(r) => n(r.product_purchase) + n(r.sga_expense) + n(r.non_op_expense) + n(r.material_purchase) + n(r.labor_cost) + n(r.expense), '지출합계', money],
     ],
   },
   sales: {
     sheet: '매출내역',
-    cols: [['date', '일자'], ['customer', '판매처'], ['industry', '산업분야'], ['series', '제품시리즈'], ['sales_type', '매출구분'], ['amount', '금액', money], ['note', '비고']],
+    cols: [['date', '일자'], ['customer', '판매처'], ['industry', '산업분야'], ['series', '제품시리즈'], ['sales_type', '매출구분'], ['amount', '금액', money], ['note', '비고'],
+      ['order_no', '판매번호'], ['project', '사업명'], ['end_client', '최종발주처']],
   },
   receivables: {
     sheet: '미수금',
@@ -120,6 +123,78 @@ export async function downloadImage(el, filename) {
   } catch (err) {
     toast(`이미지 저장 실패: ${err.message}`, true);
   }
+}
+
+// 화면 영역 → PDF (A4 가로). 카드가 페이지 경계에서 잘리지 않게 카드 아래쪽에서 페이지를 나눈다.
+//  PDF는 직접 만든다: 페이지마다 JPEG 그림 한 장 (외부 라이브러리 없음)
+export async function downloadPdf(el, filename) {
+  if (!window.html2canvas) return toast('PDF 저장 기능을 불러오지 못했습니다.', true);
+  try {
+    const scale = 2;
+    const canvas = await html2canvas(el, {
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+      scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
+    });
+    const top = el.getBoundingClientRect().top;
+    const cuts = [...el.querySelectorAll('.card, .section-title, .notice, .kpis, .grid')]
+      .map((n) => Math.round((n.getBoundingClientRect().bottom - top) * scale)).sort((a, b) => a - b);
+    const [pw, ph, margin] = [842, 595, 24]; // A4 가로 (pt)
+    const fit = (pw - margin * 2) / canvas.width;
+    const pageH = Math.floor((ph - margin * 2) / fit);
+    const pages = [];
+    for (let y = 0; y < canvas.height;) {
+      let end = Math.min(canvas.height, y + pageH);
+      if (end < canvas.height) {
+        const c = cuts.filter((v) => v > y + pageH * 0.4 && v <= end).pop();
+        if (c) end = c + 2 * scale;
+      }
+      const part = document.createElement('canvas');
+      part.width = canvas.width;
+      part.height = end - y;
+      const ctx = part.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, part.width, part.height);
+      ctx.drawImage(canvas, 0, y, canvas.width, part.height, 0, 0, canvas.width, part.height);
+      const bin = atob(part.toDataURL('image/jpeg', 0.9).split(',')[1]);
+      pages.push({ w: part.width, h: part.height, jpg: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)) });
+      y = end;
+    }
+    saveBlob(`${filename}.pdf`, pdfFromImages(pages, pw, ph, margin, fit));
+  } catch (err) {
+    toast(`PDF 저장 실패: ${err.message}`, true);
+  }
+}
+
+function pdfFromImages(pages, pw, ph, margin, fit) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const offsets = [];
+  let size = 0;
+  const push = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); size += b.length; };
+  const obj = (n, body, stream) => {
+    offsets[n] = size;
+    push(`${n} 0 obj\n${body}\n`);
+    if (stream) { push('stream\n'); push(stream); push('\nendstream\n'); }
+    push('endobj\n');
+  };
+  push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const kids = pages.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
+  pages.forEach((p, i) => {
+    const [pg, img, cs] = [3 + i * 3, 4 + i * 3, 5 + i * 3];
+    const w = (p.w * fit).toFixed(2);
+    const h = (p.h * fit).toFixed(2);
+    const draw = enc.encode(`q ${w} 0 0 ${h} ${margin} ${(ph - margin - p.h * fit).toFixed(2)} cm /Im0 Do Q`);
+    obj(pg, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${img} 0 R >> >> /Contents ${cs} 0 R >>`);
+    obj(img, `<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpg.length} >>`, p.jpg);
+    obj(cs, `<< /Length ${draw.length} >>`, draw);
+  });
+  const n = 3 + pages.length * 3;
+  const xref = size;
+  push(`xref\n0 ${n}\n0000000000 65535 f \n${offsets.slice(1).map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`);
+  push(`trailer\n<< /Size ${n} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  return new Blob(parts, { type: 'application/pdf' });
 }
 
 // 파일 이름에 쓸 수 없는 문자 제거

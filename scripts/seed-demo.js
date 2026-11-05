@@ -31,8 +31,9 @@ const stmts = ['monthly', 'sales', 'receivables', 'targets', 'ai_comments'].map(
 stmts.push(['INSERT INTO targets (year, revenue) VALUES (?, ?), (?, ?)', [curY - 1, 4_500_000_000, curY, 5_000_000_000]]);
 const insS = { run: (...a) => stmts.push(['INSERT INTO sales (date, customer, industry, series, sales_type, amount, note) VALUES (?,?,?,?,?,?,?)', a]) };
 const insR = { run: (...a) => stmts.push(['INSERT INTO receivables (customer, invoice_date, amount, collected, collected_date, due_date, note) VALUES (?,?,?,?,?,?,?)', a]) };
-const insM = { run: (...a) => stmts.push([`INSERT INTO monthly (year, month, product_purchase, material_purchase, expense, ad_expense, entertainment_expense, other_expense, product_sales, goods_sales, service_sales)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a]) };
+const insM = { run: (...a) => stmts.push([`INSERT INTO monthly (year, month, product_purchase, material_purchase, expense, sga_expense, labor_cost,
+                           non_op_income, non_op_expense, receivables_total, product_sales, goods_sales, service_sales)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a]) };
 {
 
   for (const year of [curY - 1, curY]) {
@@ -60,8 +61,9 @@ const insM = { run: (...a) => stmts.push([`INSERT INTO monthly (year, month, pro
       }
       const sales = totals.제품 + totals.상품 + totals.용역;
       insM.run(year, m,
-        round(totals.상품 * 0.7), round(totals.제품 * (0.32 + rand() * 0.08)), round(sales * (0.18 + rand() * 0.05)),
-        round(1.5e6 + rand() * 2e6), round(1e6 + rand() * 1.5e6), round(0.8e6 + rand() * 1.2e6),
+        round(totals.상품 * 0.7), round(totals.제품 * (0.32 + rand() * 0.08)), round(sales * (0.06 + rand() * 0.02)),
+        round(sales * (0.1 + rand() * 0.03)), round(sales * (0.08 + rand() * 0.02)),
+        round(0.5e6 + rand() * 1.5e6), round(0.3e6 + rand() * 1e6), round(sales * (0.8 + rand() * 0.6)),
         0, 0, 0); // 매출은 0으로 두어 매출 내역 합계를 사용
     }
   }

@@ -13,8 +13,11 @@ const SCHEMAS = {
     cols: {
       year: ['연도', '년도'], month: ['월'],
       product_purchase: ['상품매입액', '상품매입'], material_purchase: ['원재료매입액', '원재료매입', '원재료'],
-      expense: ['경비지출액', '경비', '월간경비지출액'], ad_expense: ['광고선전비', '광고비'], entertainment_expense: ['접대비'],
-      other_expense: ['그외지출액', '그외지출', '기타지출액', '기타지출'],
+      expense: ['경비', '경비지출액', '월간경비지출액'], sga_expense: ['판매비와관리비', '판관비', '판매관리비'],
+      non_op_expense: ['영업외비용'], labor_cost: ['노무비'], non_op_income: ['영업외수익'],
+      receivables_total: ['미수금총액', '미수금잔액', '미수금'],
+      // 예전 양식 열 — 서버에서 판관비로 합친다
+      ad_expense: ['광고선전비', '광고비'], entertainment_expense: ['접대비'], other_expense: ['그외지출액', '그외지출', '기타지출액', '기타지출'],
       product_sales: ['제품매출액', '제품매출'], goods_sales: ['상품매출액', '상품매출'], service_sales: ['용역매출액', '용역매출'],
     },
     required: ['month'],
@@ -56,7 +59,7 @@ function detectType(name, headers) {
   if (/매출/.test(n)) return 'sales';
   const has = (list) => list.some((a) => hs.includes(norm(a)));
   if (has(SCHEMAS.receivables.cols.collected) || has(['청구일자', '청구액'])) return 'receivables';
-  if (has(['월']) && has(['제품매출액', '경비지출액', '원재료매입액'])) return 'monthly';
+  if (has(['월']) && has(['제품매출액', '경비지출액', '경비', '원재료매입액'])) return 'monthly';
   if (has(SCHEMAS.sales.cols.customer) && has(SCHEMAS.sales.cols.amount)) return 'sales';
   if (has(SCHEMAS.targets.cols.revenue)) return 'targets';
   return null;
@@ -254,8 +257,8 @@ export async function render(main, ctx) {
     const ledgerHtml = ledgerSheets.length ? `
       <div style="margin:16px 0 8px"><b>경영지원 관리 (회사 양식)</b> <span class="badge blue">${ledgerSheets.length}개월</span></div>
       <div class="notice" style="margin-bottom:10px">시트마다 기준월을 확인해 주세요. 저장하면
-        <b>미수금 현황(외상매출금) → 미수금 관리</b>(가장 최근 기준월의 내용으로 교체${hasRecv ? ' — 파일에 미수금 상세 시트가 있어 그쪽을 씁니다' : ''}),
-        <b>매입 지출(외상매입금) → 월별 실적 상품·원재료 매입</b>, <b>경비 지출(미지급비용-직원) → 경비</b>, <b>기타 지출(미지급비용-업체) → 광고선전비·접대비·그 외 지출</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
+        <b>미수금 현황(외상매출금) 합계 → 월별 실적 미수금 총액</b>,
+        <b>매입 지출(외상매입금) → 월별 실적 상품·원재료 매입</b>, <b>경비 지출(미지급비용-직원) → 경비</b>, <b>기타 지출(미지급비용-업체) → 판관비</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th>건수</th></tr></thead><tbody>
       ${ledgerSheets.map((sh, k) => `<tr><td>${esc(sh.file)} › ${esc(sh.sheet)}</td>
         <td><input class="input" type="month" data-lm="${k}" value="${sh.month || thisMonth}" style="width:160px"></td>

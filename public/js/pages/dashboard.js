@@ -1,6 +1,6 @@
 import { api, esc, won, pct, period, setPeriod, yearOptions, toast } from '../core.js';
 import { donut, gauge, compareBar, hideTooltip, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
-import { downloadXlsx, downloadImage, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
+import { downloadXlsx, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
 
 let charts = [];
 let loadSeq = 0; // 늦게 도착한 이전 조회 결과는 버린다 (빠른 연속 클릭·화면 이동 대비)
@@ -8,8 +8,16 @@ let current = null; // 화면에 표시 중인 조회 결과 (내보내기용)
 let currentAi = null;
 
 const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
-const SALES_COLORS = { 제품: SERIES[0], 상품: SERIES[1], 용역: SERIES[2] };
-const COST_COLORS = { '상품 매입': SERIES[0], '원재료 매입': SERIES[1], 경비: SERIES[2], '기타(광고·접대 등)': SERIES[3] };
+const SALES_COLORS = { 제품매출: SERIES[0], 상품매출: SERIES[1], 용역매출: SERIES[2], 영업외수익: SERIES[3] };
+const COST_COLORS = { '상품 매입': SERIES[0], 판관비: SERIES[1], 영업외비용: SERIES[2], '원재료 매입': SERIES[3], 노무비: SERIES[4], 경비: SERIES[5] };
+const salesMixOf = (c) => [
+  { label: '제품매출', value: c.sales.product }, { label: '상품매출', value: c.sales.goods },
+  { label: '용역매출', value: c.sales.service }, { label: '영업외수익', value: c.sales.nonOp },
+];
+const costMixOf = (c) => [
+  { label: '상품 매입', value: c.costs.productPurchase }, { label: '판관비', value: c.costs.sga }, { label: '영업외비용', value: c.costs.nonOp },
+  { label: '원재료 매입', value: c.costs.materialPurchase }, { label: '노무비', value: c.costs.labor }, { label: '경비', value: c.costs.expense },
+];
 const nextLabel = { month: '다음 달', quarter: '다음 분기', year: '내년', range: '다음 기간' };
 const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
 
@@ -92,7 +100,7 @@ export async function render(main) {
       <div><h2>경영 대시보드</h2><div class="sub" id="d-sub"></div></div>
       <div class="filters">
         <div class="filters" id="d-filters">${periodControl()}</div>
-        <button type="button" class="btn" id="d-img" title="대시보드 전체를 이미지(PNG)로 저장">⬇ 화면 이미지</button>
+        <button type="button" class="btn" id="d-pdf" title="대시보드 전체를 PDF로 저장">⬇ PDF로 저장</button>
         <button type="button" class="btn" id="d-xlsx" title="대시보드 수치를 엑셀로 저장">⬇ 수치 엑셀</button>
       </div>
     </div>
@@ -122,10 +130,10 @@ export async function render(main) {
   }
   bind();
 
-  main.querySelector('#d-img').addEventListener('click', async (e) => {
+  main.querySelector('#d-pdf').addEventListener('click', async (e) => {
     if (!current) return;
     e.target.disabled = true;
-    await downloadImage(main.querySelector('#d-body'), fileSafe(`뉴토크코리아_대시보드_${current.label}_${stamp()}`));
+    await downloadPdf(main.querySelector('#d-body'), fileSafe(`뉴토크코리아_대시보드_${current.label}_${stamp()}`));
     e.target.disabled = false;
   });
   main.querySelector('#d-xlsx').addEventListener('click', () => current && exportNumbers(current));
@@ -179,7 +187,7 @@ async function load(main) {
       <div class="card kpi">
         <div class="k-label">지출</div>
         ${kv(cur.costs.total)}
-        <div class="k-meta">상품 매입 + 원재료 매입 + 경비 + 기타 · 매출 대비 <b>${cur.sales.total ? pct(cur.costs.total / cur.sales.total) : '-'}</b></div>
+        <div class="k-meta">지출 6개 항목 합계 · 매출 대비 <b>${cur.sales.total ? pct(cur.costs.total / cur.sales.total) : '-'}</b></div>
         <div class="k-lines">
           ${delta('직전 대비', cur.costs.total, s.prev.costs.total, true)}
           ${delta('전년 동기 대비', cur.costs.total, s.lastYearSame.costs.total, true)}
@@ -195,16 +203,16 @@ async function load(main) {
         </div>
       </div>
       <div class="card kpi">
-        <div class="k-label">미수금 <span class="hint">(오늘 기준)</span></div>
+        <div class="k-label">미수금</div>
         ${kv(r.outstanding)}
-        <div class="k-meta">미수 ${r.openCount}건 · <a href="#/input/receivables">전체 보기 →</a></div>
+        <div class="k-meta">${r.month ? `${Number(r.month.slice(5))}월 말 기준 미수금 총액` : '월별 실적에 미수금 총액이 입력되지 않았습니다'}</div>
         <div class="k-lines">
-          <div><span>90일 초과</span><b style="color:${r.aging[3].value ? 'var(--critical)' : 'inherit'}">${won(r.aging[3].value)} · ${r.aging[3].count}건</b></div>
-          <div><span>결제예정일 지남</span><b>${won(r.overdueAmount)} · ${r.overdueCount}건</b></div>
+          ${delta('직전 대비', r.outstanding, r.prev, true)}
+          ${delta('전년 동기 대비', r.outstanding, r.lastYearSame, true)}
         </div>
       </div>
     </div>
-    <div class="hint" style="margin-top:10px">비교 기간 · 직전: ${esc(s.prevLabel)} · 전년 동기: ${esc(s.lyLabel)} · 기간 내 청구 ${won(r.period.invoiced)} / 수금 ${won(r.period.collected)}</div>
+    <div class="hint" style="margin-top:10px">비교 기간 · 직전: ${esc(s.prevLabel)} · 전년 동기: ${esc(s.lyLabel)}</div>
     </div>
 
     <div class="section-title"><span class="num-badge">02</span>현황 분석</div>
@@ -222,8 +230,8 @@ async function load(main) {
           <div><div class="lab">남은 목표 (${a.monthsLeft}개월)</div><div class="val">${won(a.remaining)}</div></div>
         </div>
       </div>
-      ${donutCard('c-sales-mix', '매출 구성', '제품 · 상품 · 용역', won(cur.sales.total), s.short)}
-      ${donutCard('c-cost-mix', '지출 구성', '상품 · 원재료 · 경비 · 기타', won(cur.costs.total), s.short)}
+      ${donutCard('c-sales-mix', '매출 구성', '제품 · 상품 · 용역 · 영업외수익', won(cur.sales.total), s.short)}
+      ${donutCard('c-cost-mix', '지출 구성', '상품 매입 · 판관비 · 영업외비용 · 원재료 · 노무비 · 경비', won(cur.costs.total), s.short)}
     </div>
 
     <div class="section-title"><span class="num-badge">03</span>추이 및 분석</div>
@@ -243,15 +251,8 @@ async function load(main) {
   charts.push(gauge(body.querySelector('#c-gauge'), a.ytdSales, s.target, { color: '#ffffff', rest: 'rgba(255,255,255,.28)', gap: 'rgba(0,0,0,0)' }));
   quarterStats(s).forEach((x) => { const c = body.querySelector(`#c-q${x.key}`); if (c) charts.push(gauge(c, x.sales, x.target)); });
 
-  const salesMix = [
-    { label: '제품', value: cur.sales.product }, { label: '상품', value: cur.sales.goods }, { label: '용역', value: cur.sales.service },
-  ];
-  const costMix = [
-    { label: '상품 매입', value: cur.costs.productPurchase }, { label: '원재료 매입', value: cur.costs.materialPurchase },
-    { label: '경비', value: cur.costs.expense }, { label: '기타(광고·접대 등)', value: cur.costs.etcTotal },
-  ];
-  charts.push(donut(body.querySelector('#c-sales-mix'), body.querySelector('#l-c-sales-mix'), salesMix, (l) => SALES_COLORS[l]));
-  charts.push(donut(body.querySelector('#c-cost-mix'), body.querySelector('#l-c-cost-mix'), costMix, (l) => COST_COLORS[l]));
+  charts.push(donut(body.querySelector('#c-sales-mix'), body.querySelector('#l-c-sales-mix'), salesMixOf(cur), (l) => SALES_COLORS[l]));
+  charts.push(donut(body.querySelector('#c-cost-mix'), body.querySelector('#l-c-cost-mix'), costMixOf(cur), (l) => COST_COLORS[l]));
   emptyLegend(body, 'c-sales-mix', cur.sales.total, '이 기간의 매출이 없습니다.');
   emptyLegend(body, 'c-cost-mix', cur.costs.total, '이 기간의 지출이 없습니다.');
 
@@ -296,10 +297,8 @@ function cardData(key, s) {
       aoa: [
         ['항목', s.label, `직전 (${s.prevLabel})`, `전년 동기 (${s.lyLabel})`],
         cmp('매출', (x) => x.sales.total), cmp('지출', (x) => x.costs.total), cmp('추정 이익 (매출−지출)', (x) => x.profit),
+        ['미수금 총액 (기간 마지막 입력 월 말)', r.outstanding, r.prev, r.lastYearSame],
         ['기간 목표 매출', s.periodTarget, '', ''],
-        ['미수금 잔액 (오늘 기준)', r.outstanding, '', ''], ['미수 건수', r.openCount, '', ''],
-        ['90일 초과 미수금', r.aging[3].value, '', ''], ['결제예정일 경과 금액', r.overdueAmount, '', ''],
-        ['기간 내 청구액', r.period.invoiced, '', ''], ['기간 내 수금액', r.period.collected, '', ''],
       ],
       formats: [null, M, M, M],
     };
@@ -319,13 +318,11 @@ function cardData(key, s) {
       formats: [null, M, P, null],
     };
     case 'c-sales-mix': return {
-      name: '매출 구성', aoa: [['구분', '매출', '비중'], ...share([{ label: '제품', value: c.sales.product }, { label: '상품', value: c.sales.goods }, { label: '용역', value: c.sales.service }])], formats: [null, M, P],
+      name: '매출 구성', aoa: [['구분', '매출', '비중'], ...share(salesMixOf(c))], formats: [null, M, P],
     };
     case 'c-cost-mix': return {
       name: '지출 구성',
-      aoa: [['구분', '지출', '비중'], ...share([{ label: '상품 매입', value: c.costs.productPurchase }, { label: '원재료 매입', value: c.costs.materialPurchase },
-        { label: '경비', value: c.costs.expense }, { label: '광고선전비', value: c.costs.adExpense }, { label: '접대비', value: c.costs.entertainmentExpense },
-        { label: '그 외 지출', value: c.costs.otherExpense }])],
+      aoa: [['구분', '지출', '비중'], ...share(costMixOf(c))],
       formats: [null, M, P],
     };
     case 'trend': return {

@@ -8,6 +8,7 @@ import {
 import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
 import * as ledger from './lib/ledger.js';
+import { parseStatement } from './lib/statements.js';
 import * as pricing from './lib/pricing.js';
 import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
@@ -209,8 +210,9 @@ mgmt.post('/ai-comment', wrap(async (req, res) => {
 }));
 
 // ---------- 경영지원팀: 목표 / 월별 실적 ----------
-const MONTHLY_FIELDS = ['product_purchase', 'material_purchase', 'expense', 'ad_expense', 'entertainment_expense',
-  'other_expense', 'product_sales', 'goods_sales', 'service_sales'];
+// 매출: 제품·상품·용역·영업외수익 / 지출: 상품 매입·판관비·영업외비용·원재료 매입·노무비·경비 / 미수금 총액(수기)
+const MONTHLY_FIELDS = ['product_sales', 'goods_sales', 'service_sales', 'non_op_income',
+  'product_purchase', 'sga_expense', 'non_op_expense', 'material_purchase', 'labor_cost', 'expense', 'receivables_total'];
 
 mgmt.get('/targets/:year', wrap(async (req, res) => {
   const year = intParam(req.params.year, 2000, 2100, '연도');
@@ -233,7 +235,10 @@ mgmt.get('/monthly/:year', wrap(async (req, res) => {
 }));
 
 // 월별 실적 저장 문장 (db.batch 에 넣어 한 번에 실행)
+//  예전 양식(광고선전비·접대비·그 외 지출 열)은 판관비로 합친다
 function upsertMonthly(year, month, data) {
+  const legacy = num(data.ad_expense) + num(data.entertainment_expense) + num(data.other_expense);
+  if (legacy && !num(data.sga_expense)) data = { ...data, sga_expense: legacy };
   const vals = MONTHLY_FIELDS.map((f) => num(data[f]));
   return [`INSERT INTO monthly (year, month, ${MONTHLY_FIELDS.join(', ')}, updated_at)
            VALUES (?, ?, ${MONTHLY_FIELDS.map(() => '?').join(', ')}, ?)
@@ -246,6 +251,35 @@ mgmt.put('/monthly/:year', wrap(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   await db.batch(rows.map((r) => upsertMonthly(year, intParam(r.month, 1, 12, '월'), r)));
   res.json({ ok: true, count: rows.length });
+}));
+
+// 손익계산서·제조원가명세서 → 월별 실적: 읽기(미리보기)와 반영(파일에 있는 칸만 그 달에 덮어씀)
+mgmt.post('/statements/parse', wrap(async (req, res) => {
+  const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 24) : [];
+  if (!files.length) throw new HttpError(400, '파일이 없습니다.');
+  res.json({ files: files.map((f) => {
+    try { return parseStatement(Buffer.from(String(f.file || ''), 'base64'), str(f.name)); }
+    catch (e) { return { file: str(f.name), type: null, warnings: [`파일을 읽을 수 없습니다: ${e.message}`] }; }
+  }) });
+}));
+mgmt.post('/statements/apply', wrap(async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const stmts = [];
+  for (const it of items) {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(it.month || ''));
+    if (!m || +m[2] < 1 || +m[2] > 12) throw new HttpError(400, `기준월 형식은 YYYY-MM 이어야 합니다: ${it.month || '(빈 값)'}`);
+    const fields = Object.keys(it.values || {}).filter((f) => MONTHLY_FIELDS.includes(f) && f !== 'receivables_total');
+    if (!fields.length) continue;
+    stmts.push([`INSERT INTO monthly (year, month, ${fields.join(', ')}, updated_at) VALUES (?, ?, ${fields.map(() => '?').join(', ')}, ?)
+                 ON CONFLICT(year, month) DO UPDATE SET ${fields.map((f) => `${f} = excluded.${f}`).join(', ')}, updated_at = excluded.updated_at`,
+    [+m[1], +m[2], ...fields.map((f) => num(it.values[f])), nowStr()]]);
+  }
+  if (!stmts.length) throw new HttpError(400, '저장할 금액이 없습니다.');
+  await db.batch(stmts);
+  const names = items.map((it) => str(it.file)).filter(Boolean);
+  await uploads.logSaved('mgmt_statement', names.join(', '), req.user, {
+    rowCount: items.length, savedCount: stmts.length, note: items.map((it) => `${it.month} ${str(it.title)}`).join(', ') });
+  res.json({ ok: true, count: stmts.length });
 }));
 
 // ---------- 경영지원팀: 매출 내역 ----------
@@ -270,6 +304,36 @@ mgmt.post('/sales', wrap(async (req, res) => {
 mgmt.put('/sales/:id', wrap(async (req, res) => {
   await db.run('UPDATE sales SET date=?, customer=?, industry=?, series=?, sales_type=?, amount=?, note=? WHERE id=?', ...cleanSale(req.body || {}), Number(req.params.id));
   res.json({ ok: true });
+}));
+// 매출자료 CSV 올리기: 같은 원본 ID(없으면 판매번호)가 이미 있으면 새 값으로 덮어쓴다
+mgmt.post('/sales/upsert', wrap(async (req, res) => {
+  const list = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const errors = [];
+  const rows = list.map((r, i) => {
+    try {
+      const key = str(r.ext_id) || (str(r.order_no) ? `SO:${str(r.order_no)}` : '');
+      if (!key) throw new HttpError(400, 'ID와 판매번호가 모두 비어 있습니다.');
+      return [...cleanSale(r), key, str(r.order_no), str(r.work_type), str(r.biz_type), str(r.export_type), str(r.end_client), str(r.project)];
+    } catch (e) { errors.push(`${str(r.file)} ${i + 1}번째 행: ${e.message}`); return null; }
+  });
+  if (errors.length) return res.status(400).json({ error: '매출자료에 오류가 있어 저장하지 않았습니다.', details: errors.slice(0, 50), total: errors.length });
+  const keys = [...new Set(rows.map((r) => r[7]))];
+  const existing = new Set();
+  for (let i = 0; i < keys.length; i += 500) {
+    const part = keys.slice(i, i + 500);
+    (await db.all(`SELECT ext_id FROM sales WHERE ext_id IN (${part.map(() => '?').join(',')})`, ...part)).forEach((x) => existing.add(x.ext_id));
+  }
+  const stmts = [];
+  for (const r of rows) {
+    stmts.push(['DELETE FROM sales WHERE ext_id = ?', [r[7]]]);
+    stmts.push([`INSERT INTO sales (date, customer, industry, series, sales_type, amount, note, ext_id, order_no, work_type, biz_type, export_type, end_client, project)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r]);
+  }
+  await db.batch(stmts);
+  const updated = keys.filter((k) => existing.has(k)).length;
+  const files = [...new Set(list.map((r) => str(r.file)).filter(Boolean))];
+  await uploads.logSaved('mgmt_sales_csv', files.join(', '), req.user, { rowCount: rows.length, savedCount: rows.length, note: `새로 ${keys.length - updated}건 · 덮어씀 ${updated}건` });
+  res.json({ ok: true, inserted: keys.length - updated, updated });
 }));
 mgmt.delete('/sales/:id', wrap(async (req, res) => {
   await db.run('DELETE FROM sales WHERE id = ?', Number(req.params.id));

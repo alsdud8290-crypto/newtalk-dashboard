@@ -157,6 +157,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl tfoot td { font-weight: 700; background: var(--surface-2); }
 .tbl .input { height: 34px; min-width: 112px; border-radius: 8px; }
 .tbl.edit td { padding: 5px 6px; }
+/* 월별 실적 표: 행 = 항목, 열 = 1~12월 (항목 열은 가로 스크롤해도 고정) */
+.month-grid .row-head { position: sticky; left: 0; z-index: 1; background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; min-width: 104px; }
+.month-grid thead .row-head { z-index: 2; background: var(--surface-2); color: var(--text-2); font-size: 12px; }
+.month-grid .input { min-width: 108px; text-align: right; }
+.month-grid .grp-row .row-head { background: var(--surface-3); color: var(--text-2); font-size: 12px; padding: 7px 12px; }
+.month-grid .sum-row td, .month-grid .sum-row .row-head { background: var(--surface-2); font-weight: 700; }
+.month-grid td.row-total { font-weight: 600; }
 .empty { padding: 36px; text-align: center; color: var(--text-3); }
 
 .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-3); font-weight: 600; }
