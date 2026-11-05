@@ -112,17 +112,37 @@ const BRAND = `
   </span>`;
 
 function renderLogin(message = '') {
+  // 왼쪽: 남색 소개 패널(회사 마크를 크게 깔고 주황 곡선), 오른쪽: 밑줄형 입력칸 로그인
+  const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   root.innerHTML = `
-    <div class="login-wrap">
-      <form class="login-card" id="login">
-        <img class="login-logo" src="/img/logo-full.png" alt="NEWTORK">
-        <h1>경영 대시보드</h1>
-        <p>사내 계정으로 로그인해 주세요.</p>
-        <div class="field"><label>아이디</label><input class="input" name="username" autocomplete="username" required></div>
-        <div class="field"><label>비밀번호</label><input class="input" type="password" name="password" autocomplete="current-password" required></div>
-        <div class="notice err" ${message ? '' : 'hidden'} id="login-err">${esc(message)}</div>
-        <button class="btn primary">로그인</button>
-      </form>
+    <div class="login-split">
+      <section class="login-hero" aria-hidden="true">
+        <img class="hero-watermark" src="/img/logo-mark.png" alt="">
+        <div class="hero-arc"></div>
+        <div class="hero-brand"><img src="/img/logo-mark.png" alt=""><img class="hero-word" src="/img/logo-wordmark.png" alt=""></div>
+        <div class="hero-copy">
+          <span class="hero-kicker">NEWTORK KOREA · 사내 시스템</span>
+          <h2>숫자로 보는<br>뉴토크코리아</h2>
+          <p>경영 실적부터 생산·출고, 서비스 출장과 부품 단가까지<br>한 화면에서 확인하고 함께 관리합니다.</p>
+          <ul class="hero-points"><li>경영 대시보드</li><li>생산 · 납기</li><li>서비스 · 단가</li></ul>
+        </div>
+        <div class="hero-foot">© NEWTORK KOREA</div>
+      </section>
+      <section class="login-side">
+        <div class="login-top"><span>계정이 없으신가요?</span><span class="login-pill" title="계정은 관리자가 직원 관리에서 만들어 드립니다">관리자에게 요청</span></div>
+        <form class="login-form" id="login">
+          <img class="login-logo" src="/img/logo-full.png" alt="NEWTORK">
+          <h1>경영 대시보드</h1>
+          <p class="login-sub">사내 계정으로 로그인해 주세요.</p>
+          <label class="line-field">${ico('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>')}
+            <input name="username" autocomplete="username" placeholder="아이디" aria-label="아이디" required></label>
+          <label class="line-field">${ico('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l2.5 2.5M14.5 8.5 17 11"/>')}
+            <input type="password" name="password" autocomplete="current-password" placeholder="비밀번호" aria-label="비밀번호" required></label>
+          <div class="notice err" ${message ? '' : 'hidden'} id="login-err">${esc(message)}</div>
+          <button class="login-btn">로그인</button>
+          <div class="login-help">비밀번호를 잊으셨나요? 관리자에게 초기화를 요청해 주세요.</div>
+        </form>
+      </section>
     </div>`;
   root.querySelector('#login').addEventListener('submit', async (e) => {
     e.preventDefault();
