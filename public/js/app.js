@@ -112,21 +112,18 @@ const BRAND = `
   </span>`;
 
 function renderLogin(message = '') {
-  // 왼쪽: 남색 소개 패널(회사 마크를 크게 깔고 주황 곡선), 오른쪽: 밑줄형 입력칸 로그인
+  // 왼쪽: 남색 패널(회사 마크를 크게 걸치고 천천히 회전 + 가는 동심원), 오른쪽: 밑줄형 입력칸 로그인
   const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   root.innerHTML = `
     <div class="login-split">
       <section class="login-hero" aria-hidden="true">
-        <img class="hero-watermark" src="/img/logo-mark.png" alt="">
-        <div class="hero-arc"></div>
+        <div class="hero-rings"></div>
+        <svg class="hero-mark" viewBox="-110 -110 220 220" aria-hidden="true"><g><polygon points="6.2,-92.8 80.7,-49.8 45.6,-3.4"/><polygon points="83.5,-41.1 83.5,44.9 25.7,37.8"/><polygon points="77.3,51.8 2.8,94.8 -19.9,41.2"/><polygon points="-6.2,92.8 -80.7,49.8 -45.6,3.4"/><polygon points="-83.5,41.1 -83.5,-44.9 -25.7,-37.8"/><polygon points="-77.3,-51.8 -2.8,-94.8 19.9,-41.2"/></g></svg>
         <div class="hero-brand"><img src="/img/logo-mark.png" alt=""><img class="hero-word" src="/img/logo-wordmark.png" alt=""></div>
-        <div class="hero-copy">
-          <span class="hero-kicker">NEWTORK KOREA · 사내 시스템</span>
-          <h2>숫자로 보는<br>뉴토크코리아</h2>
-          <p>경영 실적부터 생산·출고, 서비스 출장과 부품 단가까지<br>한 화면에서 확인하고 함께 관리합니다.</p>
-          <ul class="hero-points"><li>경영 대시보드</li><li>생산 · 납기</li><li>서비스 · 단가</li></ul>
+        <div class="hero-title">
+          <div class="hero-en"><span>Management</span><b>Dashboard</b></div>
+          <div class="hero-ko">뉴토크코리아 사내 경영 시스템</div>
         </div>
-        <div class="hero-foot">© NEWTORK KOREA</div>
       </section>
       <section class="login-side">
         <div class="login-top"><span>계정이 없으신가요?</span><span class="login-pill" title="계정은 관리자가 직원 관리에서 만들어 드립니다">관리자에게 요청</span></div>
