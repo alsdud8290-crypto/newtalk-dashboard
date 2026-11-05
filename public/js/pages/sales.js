@@ -1,59 +1,7 @@
 import { api, esc, comma, won, parseMoney, toast, modal, confirmBox, period, setPeriod, today, VIEW_ONLY } from '../core.js';
-import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
+import { downloadCompany, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 import { periodControl, periodRange, periodLabel } from '../period-control.js';
-
-// ---------- 매출자료 CSV (판매 관리 프로그램에서 받은 월별 파일, 예: 매출자료_202601.csv) ----------
-// 열: *ID, 작업 구분, 사업 구분, 수출 구분, 판매번호, 최종발주처 / EPC, 사업명, 판매처, 매출액. 날짜 열이 없어 기준월은 파일 이름에서 읽는다.
-const CSV_COLS = { ext_id: 'id', work_type: '작업구분', biz_type: '사업구분', export_type: '수출구분', order_no: '판매번호',
-  end_client: '최종발주처epc', project: '사업명', customer: '판매처', amount: '매출액' };
-const WORK_TO_TYPE = [[/부품|교체/, '상품'], [/점검|수리|공사|용역/, '용역']]; // 그 외(제품·기타) → 제품
-const BIZ_TO_INDUSTRY = [[/상하수도|수도/, '상하수도'], [/발전/, '발전소'], [/가스|오일|석유|정유/, '가스·오일·석유화학'], [/플랜트/, '민간 플랜트']];
-const hnorm = (h) => String(h).replace(/[\s*/_·.\-]/g, '').toLowerCase();
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') { row.push(cell); cell = ''; } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(cell); rows.push(row); row = []; cell = '';
-    } else cell += c;
-  }
-  if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows;
-}
-
-async function readSalesCsv(file) {
-  const buf = await file.arrayBuffer();
-  let text = new TextDecoder('utf-8').decode(buf);
-  if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); // 엑셀에서 저장한 CSV(CP949)
-  const aoa = parseCsv(text.replace(/^\uFEFF/, ''));
-  const head = (aoa[0] || []).map(hnorm);
-  const idx = Object.fromEntries(Object.entries(CSV_COLS).map(([k, h]) => [k, head.indexOf(h)]));
-  const missing = ['customer', 'amount'].filter((k) => idx[k] < 0).map((k) => CSV_COLS[k]);
-  const ym = file.name.normalize('NFC').match(/(20\d{2})[-_.]?(0[1-9]|1[0-2])(?!\d)/);
-  const out = { file: file.name, month: ym ? `${ym[1]}-${ym[2]}` : '', rows: [], warnings: [] };
-  if (missing.length) { out.warnings.push(`필수 열이 없습니다: ${missing.join(', ')}`); return out; }
-  if (!ym) out.warnings.push('파일 이름에서 기준월(예: 매출자료_202601)을 찾지 못했습니다. 기준월을 골라 주세요.');
-  for (const r of aoa.slice(1)) {
-    if (!r.some((c) => String(c).trim())) continue;
-    const v = Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, i < 0 ? '' : String(r[i] ?? '').trim()]));
-    v.ext_id = v.ext_id.replace(/"/g, '').trim();
-    v.amount = Math.round(Number(v.amount.replace(/,/g, '')) || 0);
-    v.sales_type = (WORK_TO_TYPE.find(([re]) => re.test(v.work_type)) || [, '제품'])[1];
-    v.industry = (BIZ_TO_INDUSTRY.find(([re]) => re.test(v.biz_type)) || [, '기타'])[1];
-    v.series = v.work_type;
-    if (!v.customer) { out.warnings.push(`판매처가 빈 행을 건너뜁니다 (판매번호 ${v.order_no || '-'})`); continue; }
-    out.rows.push(v);
-  }
-  return out;
-}
+import { readSalesFiles } from '../sales-file.js';
 
 export async function render(main, ctx) {
   // 조회 기간: 월 / 분기 / 연간 / 기간(시작월~종료월) — 이 브라우저에 기억
@@ -129,7 +77,7 @@ export async function render(main, ctx) {
           <td class="r num">${comma(r.amount)}</td><td>${esc(r.note)}</td>
           <td class="r">${editable ? `<button class="btn sm" data-edit="${r.id}">수정</button> <button class="btn sm danger" data-del="${r.id}">삭제</button>` : ''}</td></tr>`).join('')}</tbody>
         <tfoot><tr><td colspan="6">${viewLabel()} ${list.length}건 합계</td><td class="r num">${comma(total)}</td><td colspan="2">${won(total)}</td></tr></tfoot>
-      </table>` : `<div class="empty">${viewLabel()} 매출 내역이 ${q ? '검색 결과에 ' : ''}없습니다. [+ 매출 등록] 또는 위의 매출자료 CSV 올리기로 입력해 주세요.</div>`;
+      </table>` : `<div class="empty">${viewLabel()} 매출 내역이 ${q ? '검색 결과에 ' : ''}없습니다. [+ 매출 등록] 또는 위의 매출자료 올리기로 입력해 주세요.</div>`;
   }
 
   async function load() {
@@ -142,16 +90,12 @@ export async function render(main, ctx) {
   main.querySelector('#s-filter').addEventListener('input', (e) => { filter = e.target.value; draw(); });
   main.querySelector('#s-add')?.addEventListener('click', () => edit(null));
   // 내려받기: 기간(월·분기·연간·전체)을 골라서, 검색어가 있으면 검색 결과만
-  const match = (r) => !filter || searchText(r).includes(filter.toLowerCase());
   bindPeriodDownload(main, 's-dl', {
     years: ctx.meta.years, ...dlStart(), currentYear: () => dlStart().year,
     current: dlStart, // 내려받기 창은 화면에서 고른 기간으로 시작
-    hint: '검색어를 입력해 두면 검색 결과만 담깁니다.',
+    hint: '매출자료 형식(달마다 시트·파일 하나)으로 담습니다. 검색어를 입력해 두면 검색 결과만 담깁니다. 받은 파일은 그대로 다시 올릴 수 있습니다.',
     onExcel: (p) => downloadCompany({ kind: 'sales', period: p, q: filter }),
-    onCsv: async (p, label) => {
-      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
-      downloadCsv(fileSafe(`뉴토크코리아_매출내역_${label}${filter ? `_${filter}` : ''}_${stamp()}`), datasetSheet('sales', d.sales.filter(match)));
-    },
+    onCsv: (p) => downloadCompany({ kind: 'sales', period: p, q: filter, format: 'csv' }),
   });
   main.querySelector('#s-table').addEventListener('click', async (e) => {
     const id = Number(e.target.dataset.edit || e.target.dataset.del);
@@ -165,15 +109,15 @@ export async function render(main, ctx) {
     }
   });
 
-  // ---------- 매출자료 CSV 올리기: 확인 후 저장, 같은 ID는 덮어씀 ----------
+  // ---------- 매출자료 올리기(CSV·엑셀): 확인 후 저장, 같은 ID는 덮어씀 ----------
   const box = main.querySelector('#csv-box');
   let files = [];
   function drawPicker() {
     box.innerHTML = `
       <div class="card" style="margin-bottom:16px">
-        <div class="card-head"><div class="ttl"><h3>매출자료 CSV 올리기</h3><span class="hint">매출자료_YYYYMM.csv 파일을 올리면 매출 내역에 자동으로 들어갑니다 (여러 개 가능)</span></div></div>
-        <label class="dropzone" id="csv-drop" style="padding:28px 20px"><input type="file" id="csv-file" accept=".csv" multiple hidden>
-          <div style="font-size:15px;font-weight:600;margin-bottom:4px">CSV 파일을 여기에 끌어다 놓거나 클릭해서 선택</div>
+        <div class="card-head"><div class="ttl"><h3>매출자료 올리기</h3><span class="hint">매출자료_YYYYMM.csv 파일(또는 여기서 내려받은 매출자료 엑셀)을 올리면 매출 내역에 자동으로 들어갑니다 (여러 개 가능)</span></div></div>
+        <label class="dropzone" id="csv-drop" style="padding:28px 20px"><input type="file" id="csv-file" accept=".csv,.xlsx,.xls" multiple hidden>
+          <div style="font-size:15px;font-weight:600;margin-bottom:4px">CSV·엑셀 파일을 여기에 끌어다 놓거나 클릭해서 선택</div>
           <div class="hint">올리면 바로 저장되지 않고 확인 화면이 나옵니다 · 같은 ID의 매출을 다시 올리면 새 값으로 덮어씁니다</div></label>
         <ul class="hint tips">
           <li>기준월은 파일 이름(_202601)에서 읽습니다. 매출 일자는 그 달 1일로 저장됩니다.</li>
@@ -189,9 +133,10 @@ export async function render(main, ctx) {
     fi.addEventListener('change', () => readFiles([...fi.files]));
   }
   async function readFiles(list) {
-    const csv = list.filter((f) => /\.csv$/i.test(f.name));
-    if (!csv.length) return toast('CSV 파일을 골라 주세요.', true);
-    files = (await Promise.all(csv.map(readSalesCsv))).sort((a, b) => a.month.localeCompare(b.month));
+    const ok = list.filter((f) => /\.(csv|xlsx|xls)$/i.test(f.name));
+    if (!ok.length) return toast('매출자료 CSV 또는 엑셀 파일을 골라 주세요.', true);
+    files = (await Promise.all(ok.map(readSalesFiles))).flat().sort((a, b) => a.month.localeCompare(b.month));
+    if (!files.length) return toast('매출자료 형식(*ID·작업 구분·판매처·매출액)의 시트가 없습니다.', true);
     drawPreview();
   }
   function drawPreview() {

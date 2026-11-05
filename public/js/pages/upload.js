@@ -1,4 +1,5 @@
-import { downloadCompany, downloadCsvZip, datasetSheet, DATASETS, fileSafe, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
+import { downloadCompany, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
+import { isSalesFileHead, parseSalesAoa, readSalesCsv, monthFromName } from '../sales-file.js';
 import { api, esc, comma, toast } from '../core.js';
 
 // 시트 종류별 열 이름 별칭. 기존 엑셀의 열 이름이 달라도 아래 중 하나와 맞으면 인식한다.
@@ -161,13 +162,15 @@ function parseSheet(name, ws) {
 export async function render(main, ctx) {
   let parsed = [];
   let ledgerSheets = []; // 회사 양식(채권·채무 현황) 시트 — 서버에서 읽음
+  let stmtSheets = []; // 손익계산서·제조원가명세서 시트 — 서버에서 읽음
+  let salesFiles = []; // 매출자료 시트·CSV
   let fullBackup = false; // '경영지원 관리 (전체)' 내려받기 파일인지
   let backupRange = null; // 기간(월·분기·연간) 내려받기 파일이면 { from, to, label }
 
   // 화면 배치는 팀 업로드(제조내역·수주서·출장보고서·부품 단가)와 같게: 머리 + 파일 고르기 카드(끌어 놓기·안내) → 확인 카드
   main.innerHTML = `
     <div class="page-head">
-      <div><h2>경영 데이터 엑셀 업로드</h2><div class="sub">목표·월별실적·매출내역·미수금 엑셀, "경영지원 관리" 양식 파일을 한 번에 반영합니다.</div></div>
+      <div><h2>경영 데이터 엑셀 업로드</h2><div class="sub">손익계산서·제조원가명세서(월별 실적), 매출자료(매출 내역), 경영지원 관리(미수금) 파일을 한 번에 반영합니다.</div></div>
       <div class="filters">
         <button class="btn" id="u-tpl">⬇ 업로드 양식</button>
         ${periodDownloadButton('u-dl')}
@@ -185,25 +188,21 @@ export async function render(main, ctx) {
         <select class="input" id="u-year">${Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - 6 + i).map((y) => `<option ${y === new Date().getFullYear() ? 'selected' : ''}>${y}</option>`).join('')}</select>
       </div>
       <ul class="hint tips">
-        <li>[⬇ 업로드 양식]을 내려받아 채우거나, 쓰던 엑셀을 그대로 올려도 됩니다. 열 이름이 비슷하면(거래처/업체명, 공급가액/금액 등) 자동으로 알아봅니다.</li>
-        <li>시트마다 종류(연간목표·월별실적·매출내역·미수금·경영지원 관리 양식)를 판별해 확인 화면에 보여 줍니다.</li>
-        <li>이 화면에서 내려받은 기간 파일(월·분기·연간)을 다시 올리면 그 기간의 매출내역·미수금만 교체합니다.</li>
+        <li>[⬇ 업로드 양식]을 채우거나, 회계 프로그램의 <b>월별 손익계산서·제조원가명세서</b>, 판매 관리의 <b>매출자료_YYYYMM.csv</b>, <b>경영지원 관리</b> 엑셀을 그대로 올리면 됩니다.</li>
+        <li>시트마다 종류(연간목표·손익계산서·제조원가명세서·매출자료·경영지원 관리)를 판별해 확인 화면에 보여 줍니다. 기준월은 조회기간·시트 이름(YYYYMM)에서 읽습니다.</li>
+        <li>[⬇ 내려받기]로 받은 파일을 그대로 다시 올리면 파일에 있는 달의 월별 실적·미수금 총액이 덮어써지고, 매출자료는 같은 *ID끼리 덮어씁니다.</li>
         <li>오류가 하나라도 있으면 아무것도 저장되지 않습니다. 저장한 기록은 [업로드 이력]에서 볼 수 있습니다.</li>
       </ul>
     </div>
     <div id="u-preview"></div>`;
 
-  // 업로드 양식 = 내려받기 파일과 같은 회사 양식 서식의 빈 파일
+  // 업로드 양식 = 내려받기 파일과 같은 구성의 빈 파일 (연간목표·손익계산서·제조원가명세서·경영지원 관리·매출자료)
   main.querySelector('#u-tpl').addEventListener('click', () => downloadCompany({ kind: 'template' }));
   // 현재 데이터 내려받기: 전체 또는 고른 기간 — 엑셀은 회사 양식(다시 올리면 그 기간만 교체), CSV는 표마다 파일 하나씩 ZIP
   bindPeriodDownload(main, 'u-dl', {
-    years: ctx.meta.years, mode: '', hint: '지금 저장된 경영지원 데이터(목표·월별 실적·매출 내역·미수금)를 담습니다. 엑셀은 그대로 다시 올릴 수 있습니다.',
+    years: ctx.meta.years, mode: '', hint: '연간목표 + 달마다 손익계산서·제조원가명세서 + 미수금(경영지원 관리 양식) + 매출자료를 담습니다. 엑셀은 그대로 다시 올릴 수 있습니다.',
     onExcel: (p) => downloadCompany({ kind: 'full', period: p }),
-    onCsv: async (p, label) => {
-      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
-      await downloadCsvZip(fileSafe(`뉴토크코리아_경영데이터_${label}_${stamp()}_CSV`), ['targets', 'monthly', 'sales', 'receivables']
-        .filter((k) => d[k]?.length).map((k) => ({ name: DATASETS[k].sheet, sheet: datasetSheet(k, d[k]) })));
-    },
+    onCsv: (p) => downloadCompany({ kind: 'full', period: p, format: 'csv' }),
   });
   const drop = main.querySelector('#u-drop');
   const input = main.querySelector('#u-file');
@@ -217,14 +216,36 @@ export async function render(main, ctx) {
     fileNames = [...files].map((f) => f.name);
     parsed = [];
     ledgerSheets = [];
+    stmtSheets = [];
+    salesFiles = [];
     fullBackup = false;
     backupRange = null;
+    const toB64 = (buf) => { const u = new Uint8Array(buf); let bin = ''; for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(bin); };
+    const readStatements = async (f, buf) => {
+      const r = await api('/api/mgmt/statements/parse', { method: 'POST', body: { files: [{ name: f.name, file: toB64(buf) }] } });
+      r.files.filter((x) => x.type).forEach((x) => stmtSheets.push(x));
+    };
     for (const f of files) {
       try {
         const buf = await f.arrayBuffer();
+        // CSV: 매출자료 / 손익계산서·제조원가명세서 (내려받은 CSV) 먼저 알아보고, 아니면 예전 표 형식으로
+        if (/\.csv$/i.test(f.name)) {
+          const text = new TextDecoder('utf-8').decode(buf);
+          if (/손익계산서|제조원가명세서/.test(text.slice(0, 200))) { await readStatements(f, buf); continue; }
+          const first = text.replace(/^\uFEFF/, '').split(/\r?\n/)[0].split(',').map((c) => c.replace(/"/g, ''));
+          if (isSalesFileHead(first)) { salesFiles.push(await readSalesCsv(f)); continue; }
+        }
         const wb = XLSX.read(buf, { cellDates: true });
         let hasCompany = false;
+        let hasStmt = false;
         for (const name of wb.SheetNames) {
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+          const title = String(aoa[0]?.[0] ?? '').replace(/\s/g, '');
+          if (name !== '안내' && (title === '손익계산서' || title === '제조원가명세서')) { hasStmt = true; continue; }
+          if (isSalesFileHead(aoa[0])) {
+            salesFiles.push({ file: `${f.name} › ${name}`, ...parseSalesAoa(aoa, monthFromName(name) ? name : f.name) });
+            continue;
+          }
           if (name === '작성안내') continue;
           if (name === '안내') {
             const a1 = wb.Sheets[name].A1?.v || '';
@@ -240,10 +261,10 @@ export async function render(main, ctx) {
           if (p.company) { hasCompany = true; continue; }
           parsed.push({ file: f.name, ...p });
         }
+        if (hasStmt) await readStatements(f, buf);
         // 회사 양식 시트는 서식(병합·글자색)까지 봐야 해서 서버에서 읽는다
         if (hasCompany && /\.xlsx$/i.test(f.name)) {
-          const b64 = btoa(Array.from(new Uint8Array(buf), (b) => String.fromCharCode(b)).join(''));
-          const r = await api('/api/mgmt/company/parse', { method: 'POST', body: { file: b64 } });
+          const r = await api('/api/mgmt/company/parse', { method: 'POST', body: { file: toB64(buf) } });
           r.sheets.forEach((sh) => ledgerSheets.push({ file: f.name, ...sh }));
         }
       } catch (err) {
@@ -256,8 +277,29 @@ export async function render(main, ctx) {
 
   function preview() {
     const el = main.querySelector('#u-preview');
-    main.querySelector('#u-picker').hidden = !!(parsed.length || ledgerSheets.length);
-    if (!parsed.length && !ledgerSheets.length) { el.innerHTML = ''; return; }
+    const any = parsed.length || ledgerSheets.length || stmtSheets.length || salesFiles.length;
+    main.querySelector('#u-picker').hidden = !!any;
+    if (!any) { el.innerHTML = ''; return; }
+    const stmtUsable = stmtSheets.filter((x) => !x.empty);
+    const salesUsable = salesFiles.filter((x) => x.rows.length);
+    const LABEL = { product_sales: '제품매출', goods_sales: '상품매출', service_sales: '용역매출', non_op_income: '영업외수익', product_purchase: '상품 매입',
+      sga_expense: '판관비', non_op_expense: '영업외비용', material_purchase: '원재료 매입', labor_cost: '노무비', expense: '경비' };
+    const stmtHtml = stmtSheets.length ? `
+      <div style="margin:16px 0 8px"><b>손익계산서·제조원가명세서 → 월별 실적</b> <span class="badge blue">${stmtUsable.length}개 시트</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>종류</th><th>기준월</th><th>읽은 금액</th></tr></thead><tbody>
+      ${stmtSheets.map((x, k) => `<tr><td class="wrap">${esc(x.file)}${x.sheet ? ` › ${esc(x.sheet)}` : ''}</td><td><span class="badge blue">${esc(x.title)}</span></td>
+        <td><input class="input" type="month" data-sm="${k}" value="${esc(x.month || thisMonth)}" style="width:160px"></td>
+        <td class="wrap">${x.empty ? '<span class="muted">금액 없음 — 건너뜀</span>' : Object.entries(x.values).filter(([, v]) => v).map(([f, v]) => `${LABEL[f]} <b class="num">${comma(v)}</b>`).join(' · ') || '<span class="muted">모두 0</span>'}
+          ${x.warnings.filter((w) => !/금액이 하나도/.test(w)).length ? `<div class="notice warn" style="margin:6px 0 0">${x.warnings.filter((w) => !/금액이 하나도/.test(w)).map(esc).join('<br>')}</div>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '';
+    const salesHtml = salesFiles.length ? `
+      <div style="margin:16px 0 8px"><b>매출자료 → 매출 내역</b> <span class="badge blue">${salesUsable.reduce((a, x) => a + x.rows.length, 0)}건</span> <span class="hint">같은 *ID는 덮어씀</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th class="r">건수</th><th class="r">매출 합계</th><th>확인할 점</th></tr></thead><tbody>
+      ${salesFiles.map((x, k) => `<tr><td class="wrap">${esc(String(x.file).normalize('NFC'))}</td>
+        <td><input class="input" type="month" data-fm="${k}" value="${esc(x.month)}" style="width:160px"></td>
+        <td class="r">${x.rows.length}</td><td class="r num">${comma(x.rows.reduce((a, r) => a + r.amount, 0))}</td>
+        <td class="wrap">${x.warnings.length ? `<span class="muted">${x.warnings.map(esc).join('<br>')}</span>` : '-'}</td></tr>`).join('')}
+      </tbody></table></div>` : '';
     const usable = parsed.filter((p) => p.type && p.rows.length);
     const hasSales = usable.some((p) => p.type === 'sales');
     const hasRecv = usable.some((p) => p.type === 'receivables');
@@ -280,26 +322,33 @@ export async function render(main, ctx) {
             <button class="btn" id="u-new">다른 파일 올리기</button>
             ${hasSales ? `<span class="check-row"><label><input type="checkbox" id="u-rs"> ${backupRange ? `${esc(backupRange.label)}의 기존 매출 내역을 지우고 교체` : '해당 연도의 기존 매출 내역을 지우고 교체'}</label></span>` : ''}
             ${hasRecv ? `<span class="check-row"><label><input type="checkbox" id="u-rr"> ${backupRange ? `${esc(backupRange.label)}에 청구된 기존 미수금을 지우고 교체` : '기존 미수금 전체를 지우고 교체'}</label></span>` : ''}
-            <button class="btn primary" id="u-save" ${usable.length || ledgerSheets.length ? '' : 'disabled'}>저장</button>
+            <button class="btn primary" id="u-save" ${usable.length || ledgerSheets.length || stmtUsable.length || salesUsable.length ? '' : 'disabled'}>저장</button>
           </div>
         </div>
-        <div class="kv-row" style="margin-bottom:12px"><span>읽은 시트 <b>${usable.length + ledgerSheets.length}</b></span>
-          <span>읽은 행 <b>${usable.reduce((a, p) => a + p.rows.length, 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0)}</b></span>
+        <div class="kv-row" style="margin-bottom:12px"><span>읽은 시트 <b>${usable.length + ledgerSheets.length + stmtUsable.length + salesUsable.length}</b></span>
+          <span>읽은 행 <b>${usable.reduce((a, p) => a + p.rows.length, 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0) + salesUsable.reduce((a, x) => a + x.rows.length, 0)}</b></span>
           ${parsed.length - usable.length ? `<span class="muted">건너뛴 시트 ${parsed.length - usable.length}</span>` : ''}</div>
-        ${fullBackup
+        ${(fullBackup || backupRange) && !hasSales && !hasRecv
+          ? `<div class="notice" style="margin-bottom:12px"><b>${backupRange ? `${esc(backupRange.label)} 데이터 파일` : '전체 데이터 파일'}</b>입니다. 저장하면 파일에 있는 달의 월별 실적·미수금 총액을 덮어쓰고, 매출자료는 같은 *ID끼리 덮어씁니다. 다른 달·다른 매출은 그대로 둡니다.</div>`
+          : fullBackup
           ? '<div class="notice" style="margin-bottom:12px"><b>전체 데이터 파일</b>입니다. 저장하면 매출내역·미수금은 파일 내용으로 <b>교체</b>되고, 연간목표·월별실적은 파일에 있는 연도·월만 덮어씁니다.</div>'
           : backupRange
           ? `<div class="notice" style="margin-bottom:12px"><b>${esc(backupRange.label)} 데이터 파일</b>(${backupRange.from} ~ ${backupRange.to})입니다. 저장하면 이 기간의 매출내역·미수금(청구일 기준)만 파일 내용으로 <b>교체</b>되고, 다른 기간 데이터는 그대로 둡니다.</div>`
-          : '<div class="notice" style="margin-bottom:12px">같은 파일을 두 번 올리면 매출 내역·미수금이 중복 등록됩니다. 다시 올릴 때는 \'지우고 교체\'를 선택해 주세요.</div>'}
+          : hasSales || hasRecv ? '<div class="notice" style="margin-bottom:12px">예전 형식의 매출내역·미수금 시트는 두 번 올리면 중복 등록됩니다. 다시 올릴 때는 \'지우고 교체\'를 선택해 주세요.</div>' : ''}
         <div id="u-result"></div>
+        ${stmtHtml}
         ${ledgerHtml}
+        ${salesHtml}
         ${parsed.map((p) => sheetPreview(p)).join('')}
       </div>`;
     if (fullBackup || backupRange) el.querySelectorAll('#u-rs, #u-rr').forEach((c) => { c.checked = true; });
     el.querySelectorAll('[data-lm]').forEach((inp) => inp.addEventListener('change', () => { ledgerSheets[Number(inp.dataset.lm)].month = inp.value; }));
+    el.querySelectorAll('[data-sm]').forEach((inp) => inp.addEventListener('change', () => { stmtSheets[Number(inp.dataset.sm)].month = inp.value; }));
+    el.querySelectorAll('[data-fm]').forEach((inp) => inp.addEventListener('change', () => { salesFiles[Number(inp.dataset.fm)].month = inp.value; }));
+    stmtSheets.forEach((x) => { if (!x.month) x.month = thisMonth; });
     ledgerSheets.forEach((sh) => { if (!sh.month) sh.month = thisMonth; });
     el.querySelector('#u-save')?.addEventListener('click', save);
-    el.querySelector('#u-new').addEventListener('click', () => { parsed = []; ledgerSheets = []; preview(); });
+    el.querySelector('#u-new').addEventListener('click', () => { parsed = []; ledgerSheets = []; stmtSheets = []; salesFiles = []; preview(); });
   }
 
   function sheetPreview(p) {
@@ -335,6 +384,13 @@ export async function render(main, ctx) {
         if (months.has(sh.month)) throw new Error(`기준월 ${sh.month}이(가) 두 번 있습니다. 시트마다 다른 기준월을 골라 주세요.`);
         months.add(sh.month);
       }
+      for (const x of salesFiles) if (x.rows.length && !/^\d{4}-\d{2}$/.test(x.month || '')) throw new Error(`${x.file}: 매출자료의 기준월을 골라 주세요.`);
+      // 손익계산서·제조원가명세서 → 그 달 월별 실적 (파일에 있는 칸만 덮어씀)
+      const stmtItems = stmtSheets.filter((x) => !x.empty).map((x) => ({ file: x.file, title: x.title, month: x.month, values: x.values }));
+      if (stmtItems.length) await api('/api/mgmt/statements/apply', { method: 'POST', body: { items: stmtItems } });
+      // 매출자료 → 매출 내역 (같은 *ID는 덮어씀)
+      const salesRows = salesFiles.flatMap((x) => x.rows.map((r) => ({ ...r, file: String(x.file).normalize('NFC'), date: `${x.month}-01`, note: '' })));
+      const su = salesRows.length ? await api('/api/mgmt/sales/upsert', { method: 'POST', body: { rows: salesRows } }) : null;
       const hasData = Object.values(body).some((v) => Array.isArray(v) && v.length);
       const r = hasData ? await api('/api/mgmt/import', { method: 'POST', body }) : { counts: { targets: 0, monthly: 0, sales: 0, receivables: 0 } };
       // 회사 양식 시트 반영: 월별실적 시트에 그 달이 있으면 그 값을 우선, 미수금 상세 시트가 있으면 그쪽을 우선
@@ -346,8 +402,8 @@ export async function render(main, ctx) {
         const out = await api('/api/mgmt/company/import', { method: 'POST', body: {
           month: sh.month, entries: sh.entries, sections: sh.found,
           applyMonthly: !monthlyInFile.has(sh.month),
-          // 내려받은 백업 파일은 미수금 시트가 따로 있으므로 미수금 현황으로 미수금을 덮지 않는다
-          applyReceivables: !fullBackup && !backupRange && !body.receivables.length && sh.month === latest,
+          // 예전 백업 파일처럼 미수금 상세 시트가 따로 있으면 그쪽을 쓰고, 없으면 가장 최근 기준월의 미수금 현황으로
+          applyReceivables: !body.receivables.length && sh.month === latest,
         } });
         if (out.receivables !== null) recvFromCompany = out.receivables;
         if (out.monthly) recvMonths.push(sh.month);
@@ -356,15 +412,18 @@ export async function render(main, ctx) {
       const companyNote = !ledgerSheets.length ? ''
         : recvMonths.length ? ` + 미수금 총액 반영 ${recvMonths.length}개월(${recvMonths.join(', ')})`
           : recvFromCompany === null && !body.monthly.length ? ' · 경영지원 관리 시트에 반영할 내용(거래처·금액)이 없었습니다' : '';
-      const note = `연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건${companyNote}, 매출내역 ${r.counts.sales}건, 미수금 ${recvCount}`;
+      const stmtMonths = [...new Set(stmtItems.map((x) => x.month))].sort();
+      const newNote = [stmtMonths.length ? `손익계산서·제조원가명세서 ${stmtMonths.length}개월(${stmtMonths.join(', ')})` : '', su ? `매출자료 새로 ${su.inserted}건·덮어씀 ${su.updated}건` : ''].filter(Boolean);
+      const note = [...newNote, r.counts.targets ? `연간목표 ${r.counts.targets}건` : '', r.counts.monthly ? `월별실적 ${r.counts.monthly}건` : '', r.counts.sales ? `매출내역 ${r.counts.sales}건` : '',
+        companyNote.replace(/^ [+·] /, ''), recvFromCompany !== null || r.counts.receivables ? `미수금 ${recvCount}` : ''].filter(Boolean).join(', ') || '반영할 내용 없음';
       // 이력에는 0건인 항목을 빼고 짧게
-      const logNote = [['연간목표', r.counts.targets], ['월별실적', r.counts.monthly], ['매출내역', r.counts.sales]].filter(([, n]) => n).map(([l, n]) => `${l} ${n}건`)
+      const logNote = [...newNote, ...[['연간목표', r.counts.targets], ['월별실적', r.counts.monthly], ['매출내역', r.counts.sales]].filter(([, n]) => n).map(([l, n]) => `${l} ${n}건`)]
         .concat(recvFromCompany !== null || r.counts.receivables ? [`미수금 ${recvCount}`] : [], recvMonths.length ? [`미수금 총액 ${recvMonths.length}개월`] : []).join(', ') || '반영할 내용 없음';
       result.innerHTML = `<div class="notice">저장 완료 — ${note}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
       main.querySelector('#u-state').textContent = '경영 데이터 엑셀 · 저장 완료';
       // 업로드 이력에 남김 (실패해도 저장은 끝났으므로 안내만)
-      const savedCount = r.counts.targets + r.counts.monthly + r.counts.sales + (recvFromCompany ?? r.counts.receivables) + recvMonths.length;
-      const rowCount = parsed.reduce((a, p) => a + (p.type ? p.rows.length : 0), 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0);
+      const savedCount = r.counts.targets + r.counts.monthly + r.counts.sales + (recvFromCompany ?? r.counts.receivables) + recvMonths.length + stmtItems.length + salesRows.length;
+      const rowCount = parsed.reduce((a, p) => a + (p.type ? p.rows.length : 0), 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0) + salesRows.length;
       api('/api/mgmt/upload-log', { method: 'POST', body: { file_name: fileNames.join(', '), row_count: rowCount, saved_count: savedCount, note: logNote } })
         .catch(() => toast('저장은 됐지만 업로드 이력을 남기지 못했습니다.', true));
       toast('업로드한 데이터를 저장했습니다.');

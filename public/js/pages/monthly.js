@@ -1,5 +1,5 @@
 import { api, esc, comma, won, parseMoney, bindMoneyInputs, toast, period, setPeriod, yearOptions, VIEW_ONLY } from '../core.js';
-import { datasetSheet, downloadCsv, downloadCompany, stamp, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
+import { downloadCompany, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 // [필드, 이름, 묶음] — 매출: 손익계산서 매출액·영업외수익 / 지출: 손익계산서 + 제조원가명세서 / 미수금 총액: 월말 잔액 수기 입력
 export const FIELDS = [
@@ -134,18 +134,13 @@ export async function render(main, ctx) {
     toast('매출 내역 합계를 채웠습니다. 확인 후 저장해 주세요.');
   });
 
-  // 내려받기: 기간(월·분기·연간·전체)을 골라 저장된 값 기준으로. 엑셀은 회사 양식(경영지원 관리) — 달마다 시트 + 연간목표·월별실적
+  // 내려받기: 기간(월·분기·연간·전체)을 골라 저장된 값 기준으로 — 달마다 손익계산서·제조원가명세서 (회계 프로그램 양식, 그대로 다시 올릴 수 있음)
+  const warnDirty = () => { if (dirty) toast('저장하지 않은 변경 사항은 들어가지 않습니다. 먼저 저장해 주세요.', true); };
   bindPeriodDownload(main, 'm-dl', {
     years: ctx.meta.years, year, mode: 'year', currentYear: () => year,
-    onExcel: (p) => {
-      if (dirty) toast('저장하지 않은 변경 사항은 들어가지 않습니다. 먼저 저장해 주세요.', true);
-      return downloadCompany({ kind: 'monthly', period: p });
-    },
-    onCsv: async (p, label) => {
-      if (dirty) toast('저장하지 않은 변경 사항은 들어가지 않습니다. 먼저 저장해 주세요.', true);
-      const d = await api(`/api/mgmt/export${p ? `?period=${p}` : ''}`);
-      downloadCsv(`뉴토크코리아_월별실적_${label}_${stamp()}`, datasetSheet('monthly', d.monthly));
-    },
+    hint: '달마다 손익계산서·제조원가명세서 양식으로 담습니다 (CSV는 시트마다 파일 하나, ZIP). 위의 올리기에 그대로 다시 올릴 수 있습니다.',
+    onExcel: (p) => { warnDirty(); return downloadCompany({ kind: 'monthly', period: p }); },
+    onCsv: (p) => { warnDirty(); return downloadCompany({ kind: 'monthly', period: p, format: 'csv' }); },
   });
 
   main.querySelector('#m-save').addEventListener('click', async () => {
@@ -166,7 +161,7 @@ export async function render(main, ctx) {
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><div class="ttl"><h3>손익계산서·제조원가명세서 올리기</h3>
           <span class="hint">회계 프로그램에서 한 달씩 조회해 받은 엑셀(.xls·.xlsx)을 올리면 그 달 실적 칸에 자동으로 들어갑니다</span></div></div>
-        <label class="dropzone" id="st-drop"><input type="file" id="st-file" accept=".xls,.xlsx" multiple hidden>
+        <label class="dropzone" id="st-drop"><input type="file" id="st-file" accept=".xls,.xlsx,.csv" multiple hidden>
           <div style="font-size:15px;font-weight:600;margin-bottom:4px">파일을 여기에 끌어다 놓거나 클릭해서 선택 (여러 개 가능)</div>
           <div class="hint">올리면 바로 저장되지 않고 확인 화면이 나옵니다</div></label>
         <ul class="hint tips">
@@ -211,7 +206,7 @@ export async function render(main, ctx) {
         <div class="table-wrap"><table class="tbl">
           <thead><tr><th>파일</th><th>종류</th><th>기준월</th><th>읽은 금액</th></tr></thead>
           <tbody>${parsed.map((p, k) => `<tr>
-            <td class="wrap">${esc(p.file)}</td>
+            <td class="wrap">${esc(p.file)}${p.sheet && !/^sheet\d*$/i.test(p.sheet) ? ` › ${esc(p.sheet)}` : ''}</td>
             <td>${p.type ? `<span class="badge blue">${esc(p.title)}</span>` : '<span class="badge">건너뜀</span>'}</td>
             <td>${p.type ? `<input class="input" type="month" data-st="${k}" value="${esc(p.month)}" style="width:160px">` : '-'}</td>
             <td class="wrap">${p.type ? Object.entries(p.values).map(([f, v]) => `${LABEL[f]} <b class="num">${comma(v)}</b>`).join(' · ') : ''}

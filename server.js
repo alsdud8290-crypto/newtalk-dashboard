@@ -8,7 +8,9 @@ import {
 import { summarize, resolvePeriod, PeriodError, INDUSTRIES, SALES_TYPES } from './lib/summary.js';
 import { generateComment } from './lib/ai.js';
 import * as ledger from './lib/ledger.js';
-import { parseStatement } from './lib/statements.js';
+import * as stmt from './lib/statements.js';
+import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import * as pricing from './lib/pricing.js';
 import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
@@ -258,9 +260,11 @@ mgmt.post('/statements/parse', wrap(async (req, res) => {
   const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 24) : [];
   if (!files.length) throw new HttpError(400, '파일이 없습니다.');
   res.json({ files: files.map((f) => {
-    try { return parseStatement(Buffer.from(String(f.file || ''), 'base64'), str(f.name)); }
-    catch (e) { return { file: str(f.name), type: null, warnings: [`파일을 읽을 수 없습니다: ${e.message}`] }; }
-  }) });
+    try {
+      const list = stmt.parseStatements(Buffer.from(String(f.file || ''), 'base64'), str(f.name));
+      return list.length ? list : [{ file: str(f.name), type: null, warnings: ['손익계산서·제조원가명세서가 아닙니다. 건너뜁니다.'] }];
+    } catch (e) { return [{ file: str(f.name), type: null, warnings: [`파일을 읽을 수 없습니다: ${e.message}`] }]; }
+  }).flat() });
 }));
 mgmt.post('/statements/apply', wrap(async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -330,8 +334,15 @@ mgmt.post('/sales/upsert', wrap(async (req, res) => {
     const part = keys.slice(i, i + 500);
     (await db.all(`SELECT ext_id FROM sales WHERE ext_id IN (${part.map(() => '?').join(',')})`, ...part)).forEach((x) => existing.add(x.ext_id));
   }
+  // 'NT-행번호' = 화면에서 직접 등록한 매출을 내려받은 것 → 그 원래 행을 덮어씀
+  for (const k of keys) {
+    const m = /^NT-(\d+)$/.exec(k);
+    if (m && !existing.has(k) && await db.get("SELECT 1 FROM sales WHERE id = ? AND ext_id = ''", Number(m[1]))) existing.add(k);
+  }
   const stmts = [];
   for (const r of rows) {
+    const nt = /^NT-(\d+)$/.exec(r[7]);
+    if (nt) stmts.push(["DELETE FROM sales WHERE id = ? AND ext_id = ''", [Number(nt[1])]]);
     stmts.push(['DELETE FROM sales WHERE ext_id = ?', [r[7]]]);
     stmts.push([`INSERT INTO sales (date, customer, industry, series, sales_type, amount, note, ext_id, order_no, work_type, biz_type, export_type, end_client, project)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r]);
@@ -467,13 +478,13 @@ mgmt.post('/company/import', wrap(async (req, res) => {
     throw new HttpError(400, e.message);
   }
 }));
-// 모든 엑셀 내려받기 (회사 양식 서식)
-//   kind=full      : 안내 + 기준월마다 회사 양식 + 연간목표·월별실적·매출내역·미수금 (year 있으면 그 해만)
-//   kind=monthly   : year 의 기준월 회사 양식 + 연간목표·월별실적
-//   kind=receivables: 이번 달 회사 양식(미수금 현황) + 미수금 상세 (open=1 미수 건만, q 검색)
-//   kind=sales     : 매출내역 (year, q)
-//   kind=targets   : 연간목표
-//   kind=template  : 업로드 양식 (위 파일들과 같은 서식, 빈 시트)
+// 모든 엑셀 내려받기 — 자료마다 회사에서 쓰는 형식 그대로
+//   kind=monthly    : 월별 실적 → 달마다 손익계산서·제조원가명세서 (회계 프로그램 양식)
+//   kind=sales      : 매출 내역 → 달마다 매출자료 (판매 관리 프로그램 CSV와 같은 열, q 검색)
+//   kind=receivables: 미수금 → 경영지원 관리 회사 양식 (미수금 현황)
+//   kind=full       : 위 세 가지 + 연간목표를 한 파일로 (경영 데이터 업로드에 그대로 다시 올릴 수 있음)
+//   kind=template   : full 과 같은 구성의 빈 양식 (이번 달)
+//   format=csv      : 시트마다 CSV 한 개, 여러 개면 ZIP
 mgmt.get('/xlsx', wrap(async (req, res) => {
   const kind = String(req.query.kind || 'full');
   const sc = exportScope(req.query);
@@ -500,42 +511,120 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   };
   // 월·분기 파일에는 1년 단위 값인 연간목표를 넣지 않는다
   const targets = async () => (sc && sc.from.slice(5) === '01' && sc.to.slice(5) === '12' || !sc ? src.targets() : undefined);
+  // 기간 안의 달 (이번 달까지, 데이터가 있는 달은 모두). 기간이 없으면 데이터가 있는 달
+  const monthsOf = async () => {
+    const set = new Set((await src.monthly()).map((r) => `${r.year}-${p2(r.month)}`));
+    (await src.sales()).forEach((r) => set.add(r.date.slice(0, 7)));
+    if (sc) for (const m of await scopeMonths()) set.add(m);
+    if (!set.size) set.add(thisMonth);
+    return [...set].sort();
+  };
+  const monthlyBy = async () => Object.fromEntries((await src.monthly()).map((r) => [`${r.year}-${p2(r.month)}`, r]));
+  const salesBy = async () => (await sales()).reduce((m, r) => ((m[r.date.slice(0, 7)] ||= []).push(r), m), {});
+  // 시트 목록 [이름, aoa, 쓰기 함수] — 엑셀·CSV 공통
+  const stmtSheets = (months, by) => months.flatMap((m) => ['pl', 'mc'].map((k) => [stmt.statementSheetName(k, m), stmt.statementAoa(k, m, by[m] || null),
+    (ws) => stmt.writeStatementSheet(ws, k, m, by[m] || null)]));
+  const salesSheets = (months, by) => months.filter((m) => by[m]?.length || months.length === 1).map((m) => {
+    const aoa = stmt.salesFileAoa(by[m] || []);
+    return [stmt.salesSheetName(m), aoa, (ws) => stmt.writeAoaTable(ws, aoa, [14, 14, 18, 9, 15, 26, 40, 26, 15], [9])];
+  });
+  const targetSheet = (rows) => {
+    const aoa = [['연도', '목표매출액'], ...rows.map((r) => [r.year, r.revenue ?? ''])];
+    return ['연간목표', aoa, (ws) => stmt.writeAoaTable(ws, aoa, [10, 20], [2])];
+  };
+  const stampStr0 = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
+  const fname = (label, ext) => `뉴토크코리아_${label}${q ? `_${q}` : ''}_${stampStr0}.${ext}`.replace(/[\\/:*?"<>|]/g, '');
+  // CSV: 시트 하나면 그 CSV, 여러 개면 ZIP
+  const sendCsv = async (label, sheets) => {
+    if (sheets.length === 1) return fileSend(res, `${sheets[0][0]}.csv`, 'text/csv; charset=utf-8', Buffer.from(stmt.aoaCsv(sheets[0][1]), 'utf8'));
+    const zip = new JSZip();
+    sheets.forEach(([name, aoa]) => zip.file(`${name}.csv`, stmt.aoaCsv(aoa)));
+    return fileSend(res, fname(`${label}_CSV`, 'zip'), 'application/zip', await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  };
+  const sendSheets = async (label, sheets) => {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'NEWTORK 경영 대시보드';
+    sheets.forEach(([name, , write]) => write(wb.addWorksheet(name)));
+    return fileSend(res, fname(label, 'xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', Buffer.from(await wb.xlsx.writeBuffer()));
+  };
+  const csv = req.query.format === 'csv';
+  if (kind === 'monthly') {
+    const sheets = stmtSheets(await monthsOf(), await monthlyBy());
+    return csv ? sendCsv(`월별실적_${scopeName}`, sheets) : sendSheets(`손익계산서·제조원가명세서_${scopeName}`, sheets);
+  }
+  if (kind === 'sales') {
+    const by = await salesBy();
+    const sheets = salesSheets(sc ? (await monthsOf()).filter((m) => by[m]?.length) : Object.keys(by).sort(), by);
+    if (!sheets.length) sheets.push([stmt.salesSheetName(sc ? sc.to : thisMonth), [stmt.SALES_FILE_HEAD], (ws) => stmt.writeAoaTable(ws, [stmt.SALES_FILE_HEAD], [14, 14, 18, 9, 15, 26, 40, 26, 15])]);
+    return csv ? sendCsv(`매출자료_${scopeName}`, sheets) : sendSheets(`매출자료_${scopeName}`, sheets);
+  }
   let spec;
   let label;
-  if (kind === 'monthly') {
-    spec = { guide, scope: sc, months: sc ? await scopeMonths() : await ledger.monthsWithData(null), data: { targets: await targets(), monthly: await src.monthly() } };
-    label = `월별실적_${scopeName}`;
+  if (kind === 'full' || kind === 'template') {
+    const tpl = kind === 'template';
+    const months = tpl ? [thisMonth] : await monthsOf();
+    const by = tpl ? {} : await monthlyBy();
+    const sby = tpl ? {} : await salesBy();
+    const tRows = tpl ? [{ year: now.getFullYear() }] : (await targets()) || [];
+    // 미수금(경영지원 관리) 시트는 미수금 총액이 있거나 올려 둔 미수금 현황이 있는 달만 — 다시 올렸을 때 없던 달의 미수금이 생기지 않게
+    //  기준은 월별 실적의 미수금 총액(화면에 보이는 값): 올려 둔 미수금 현황 행의 합계가 총액과 같으면 그 행 그대로,
+    //  다르면(나중에 총액을 직접 고친 경우 등) 총액 한 줄 → 다시 올려도 미수금 총액이 바뀌지 않음. 총액이 없는 달은 넣지 않음
+    const arMonths = tpl ? months : [];
+    const arEntries = {};
+    if (!tpl) {
+      for (const m of months) {
+        const total = Math.round(Number(by[m]?.receivables_total) || 0);
+        if (!total) continue;
+        const stored = (await ledger.getEntries(m)).filter((e) => e.section === 'ar' && e.name);
+        const sum = Math.round(stored.reduce((a, e) => a + (Number(e.balance) || 0), 0));
+        arMonths.push(m);
+        arEntries[m] = stored.length && sum === total ? stored
+          : [{ section: 'ar', grp: 'collected', code: '', name: '미수금 총액 (월별 실적 입력값)', balance: total, memo: '', red: 0 }];
+      }
+    }
+    const sheets = [...(tpl || tRows.length ? [targetSheet(tRows)] : []), ...stmtSheets(months, by), ...salesSheets(tpl ? months : months.filter((m) => sby[m]?.length), sby)];
+    if (csv) {
+      // 미수금(경영지원 관리 양식)은 CSV로는 표 하나로: 기준월·구분·코드·거래처명·잔액·적요
+      const grp = { long: '장기 미수', collected: '당월 수금', scheduled: '수금 예정', normal: '' };
+      for (const m of arMonths) {
+        const ar = tpl ? [] : arEntries[m];
+        if (ar.length || tpl) sheets.push([`미수금_${m.replace('-', '')}`, [['기준월', '구분', '코드', '거래처명', '잔액', '적요'], ...ar.map((e) => [m, grp[e.grp] ?? e.grp, e.code, e.name, e.balance, e.memo])]]);
+      }
+      return sendCsv(tpl ? '업로드양식' : `경영데이터_${scopeName}`, sheets);
+    }
+    spec = {
+      guide: true, template: tpl, scope: sc, months: arMonths, arOnly: true, entries: arEntries,
+      guideRows: [
+        ...(sheets.some(([n]) => n === '연간목표') ? [['연간목표', '연도별 목표매출액(원). 목표매출액이 빈 행은 건너뜀']] : []),
+        ['손익계산서_YYYYMM', '월별 손익계산서 (회계 프로그램 양식) → 제품·상품·용역 매출, 영업외수익, 상품 매입, 판관비, 영업외비용'],
+        ['제조원가명세서_YYYYMM', '월별 제조원가명세서 (회계 프로그램 양식) → 원재료 매입, 노무비, 경비'],
+        ['YYYY-MM', '경영지원 관리 (회사 양식) — 미수금 현황. 합계가 그 달 월별 실적의 미수금 총액'],
+        ['매출자료_YYYYMM', '매출자료 (판매 관리 프로그램 CSV와 같은 열). 같은 *ID는 덮어씀'],
+      ],
+      guideNote: tpl ? '쓰는 시트만 채워 웹의 [경영 데이터 업로드]에 올리세요. 다른 달은 시트를 복사해 이름의 YYYYMM만 바꾸면 됩니다. 빈 시트는 건너뜁니다.'
+        : '이 파일을 웹의 [경영 데이터 업로드]에 그대로 올리면 파일에 있는 달의 월별 실적·미수금 총액이 덮어써지고, 매출자료는 같은 *ID끼리 덮어씁니다.',
+      extend: (wb) => sheets.forEach(([name, , write]) => write(wb.addWorksheet(name))),
+    };
+    label = tpl ? `업로드양식_${now.getFullYear()}` : `경영데이터_${scopeName}`;
   } else if (kind === 'receivables') {
     if (sc) {
       // 기간: 달마다 그 기간의 미수금 현황 + 그 기간에 청구된 건(미수·수금 완료 모두)
       const months = await scopeMonths();
       spec = { guide, scope: sc, months, arOnly: true, data: { receivables: (await src.receivables()).filter(like(['customer'])) } };
-      label = `미수금_${scopeName}`;
+      label = `경영지원관리_미수금_${scopeName}`;
     } else {
       spec = { guide: guide && req.query.open !== '1', months: [thisMonth], arOnly: true, data: { receivables: await receivables() } };
-      label = `미수금_${thisMonth}`;
+      label = `경영지원관리_미수금_${thisMonth}`;
     }
-  } else if (kind === 'sales') {
-    spec = { guide, scope: sc, data: { sales: await sales() } };
-    label = `매출내역_${scopeName}`;
-  } else if (kind === 'template') {
-    const y = now.getFullYear();
-    spec = { guide: true, template: true, months: [thisMonth],
-      data: { targets: [{ year: y }], monthly: Array.from({ length: 12 }, (_, i) => ({ year: y, month: i + 1 })), sales: [], receivables: [] } };
-    label = `업로드양식_${y}`;
   } else if (kind === 'targets') {
     spec = { data: { targets: await src.targets() } };
     label = '연간목표';
   } else {
-    const months = sc ? await scopeMonths() : await ledger.monthsWithData(null);
-    const rec = await src.receivables();
-    if (!sc && !months.includes(thisMonth) && (await db.get('SELECT 1 FROM receivables LIMIT 1'))) months.push(thisMonth);
-    spec = { guide: true, scope: sc, months: months.sort(), data: { targets: await targets(), monthly: await src.monthly(), sales: await sales(), receivables: rec } };
-    label = scopeName;
+    throw new HttpError(400, `알 수 없는 내려받기 종류: ${kind}`);
   }
   const buf = await ledger.buildCompanyWorkbook(spec);
   const stampStr = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}`;
-  const name = `뉴토크코리아_경영지원관리_${label}${q ? `_${q}` : ''}_${stampStr}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
+  const name = `뉴토크코리아_${label}${q ? `_${q}` : ''}_${stampStr}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.send(Buffer.from(buf));
