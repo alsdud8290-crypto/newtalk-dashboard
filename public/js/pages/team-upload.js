@@ -1,4 +1,5 @@
 // 팀 업로드 화면 공통 (ITB2026 업로드 확인 화면을 옮겨 옴): 파일 선택 → 추출 → 확인·수정 → 저장
+//  단가 화면(부품 단가 데이터 CSV·출장지별 단가 CSV·신규 부품 엑셀)도 mountUpload로 이 흐름을 쓴다
 //  - 표에서 칸을 바로 고칠 수 있고, 행을 제외할 수 있다. [다시 검사]로 고친 값을 반영해 오류·중복을 다시 확인
 //  - 오류가 하나라도 있으면 저장되지 않는다. 이미 저장된 번호는 건너뛰거나(기본) 새 값으로 갱신(제조내역)
 // 업로드 이력: 그 팀 파일 종류의 최근 100건 (원본 파일은 보관하지 않음)
@@ -23,11 +24,25 @@ const UPLOADS = {
     tips: ['요청처의 시·도·시·군이 기억돼 있으면 자동으로 채우고, 없으면 확인 표에서 골라 주세요(저장하면 기억).', '잘린 값(…), 특히 긴 부품명은 전체 값으로 고쳐 주세요.',
       '같은 출장 시작일·요청처의 보고서가 있으면 건너뜁니다. 실제로 두 번 간 경우 "중복 아님"을 체크하세요.'],
   },
-  quote_pdf: {
-    title: '견적서 PDF 업로드', team: 'service', accept: '.pdf', back: '#/prices/parts', backLabel: '부품별 비교',
-    sub: '유상 A/S 견적서 PDF를 올리면 품목마다 단가를 읽어 출장지(업체)별 부품 단가로 저장합니다. 적용 시작일 = 견적 날짜, 출장지 = 업체명.',
-    tips: ['견적서 품명마다 단가표의 파트넘버를 골라 주세요. 한 번 고르면 다음 견적서부터 자동으로 채웁니다.', '수량 × 단가가 금액과 다르면 오류로 표시됩니다.',
-      '같은 견적 번호·품명은 한 번만 저장합니다. 수신자·담당자·연락처는 읽지 않습니다.'],
+  part_price_csv: {
+    skippedLabel: '분류 제목·빈 파트넘버', title: '부품 단가 데이터 업로드', team: 'service', accept: '.csv', back: '#/prices/parts', backLabel: '부품별 비교', done: '#/prices/parts', doneLabel: '부품별 비교에서 확인',
+    sub: '부품 단가 데이터 CSV를 올리면 분류·파트넘버·품목·적용모델·기준단가를 읽어 단가표에 저장합니다. 같은 파트넘버가 이미 있으면 새 내용으로 덮어씁니다(바뀐 칸 표시).',
+    tips: ['회사 "부품 및 단가리스트" 엑셀의 [부품] 시트를 "CSV(쉼표로 분리)"로 저장해 그대로 올리면 됩니다 — 머리글 "구분(= 파트넘버)·품목·적요(= 적용모델)·기준단가".',
+      '"01 현장서비스"처럼 한 칸만 있는 줄은 분류 제목으로 읽고, 그 아래 부품들의 분류로 씁니다. [대외비] 안내 줄은 건너뜁니다.',
+      '"분류, 파트넘버, 품목, 적용모델, 기준단가" 머리글로 된 CSV도 됩니다(양식 내려받기). UTF-8·EUC-KR 모두 읽습니다.',
+      '같은 파일에 같은 파트넘버가 여러 번 나오면 아래쪽 줄 기준입니다. 기준단가가 빈 칸이면 "미입력"으로 저장합니다.'],
+  },
+  company_price_csv: {
+    skippedLabel: '분류 제목·빈 파트넘버', title: '출장지별 단가 업로드', team: 'service', accept: '.csv,.xlsx', back: '#/prices/parts', backLabel: '부품별 비교', done: '#/prices/companies', doneLabel: '출장지별 비교에서 확인',
+    sub: '출장지(업체)별 부품 단가 CSV를 올리면 파트넘버·출장지·단가·적용 시작일을 읽어 저장합니다. 같은 부품·출장지·적용 시작일이 이미 있으면 새 단가로 덮어씁니다.',
+    tips: ['머리글: 파트넘버, 품목(선택), 출장지, 단가, 적용 시작일, 비고(선택) — 양식을 내려받아 쓰세요.', '파트넘버는 단가표에 있어야 합니다. 없으면 먼저 신규 부품 등록에서 등록하세요.',
+      '적용 시작일은 2026-03-10, 2026.3.10, 2026/03/10 모두 됩니다. 단가는 원 단위 정수(콤마 허용, 부가세 제외).'],
+  },
+  part_catalog_excel: {
+    skippedLabel: '분류 제목·빈 파트넘버', title: '신규 부품 엑셀 업로드', team: 'service', accept: '.xlsx,.xls,.csv', back: '#/prices/parts', backLabel: '부품별 비교', done: '#/prices/parts', doneLabel: '부품별 비교에서 확인',
+    sub: '엑셀로 여러 부품을 한 번에 등록합니다. 같은 파트넘버가 이미 있으면 새 내용으로 덮어씁니다(바뀐 칸 표시).',
+    tips: ['머리글: 분류, 파트넘버, 품목, 적용모델, 기준단가 — 양식을 내려받아 쓰세요. 회사 "부품 및 단가리스트" 엑셀도 그대로 됩니다([부품] 시트만 읽음).',
+      '같은 파일에 같은 파트넘버가 여러 번 나오면 아래쪽 줄 기준입니다.'],
   },
 };
 
@@ -120,9 +135,9 @@ export function mountUpload(body, kind, { heading = '' } = {}) {
         <div class="kv-row">
           <span>추출 <b>${s.total}</b>행</span><span>저장 예정 <b>${s.to_save}</b>${batch.update_existing ? ` (그중 갱신 ${s.update_rows})` : ''}</span>
           <span class="${s.error_rows ? 'bad' : ''}">오류 <b>${s.error_rows}</b></span><span>건너뜀 <b>${s.duplicate_rows}</b>${s.superseded_rows ? ` (아래 행으로 대체 ${s.superseded_rows})` : ''}</span>
-          <span>제외 <b>${s.excluded_rows}</b></span>${s.skipped_rows ? `<span class="muted">읽을 때 뺀 행(일련번호 없음) ${s.skipped_rows}</span>` : ''}
+          <span>제외 <b>${s.excluded_rows}</b></span>${s.skipped_rows ? `<span class="muted">읽을 때 뺀 행(${conf.skippedLabel || '일련번호 없음'}) ${s.skipped_rows}</span>` : ''}
         </div>
-        ${done ? (batch.status === 'saved' ? `<div class="notice" style="margin:14px 0 0">저장했습니다 — ${batch.saved_count}건. <a href="#/${conf.team}">대시보드에서 확인 →</a></div>` : '') : s.error_rows
+        ${done ? (batch.status === 'saved' ? `<div class="notice" style="margin:14px 0 0">저장했습니다 — ${batch.saved_count}건. <a href="${conf.done || `#/${conf.team}`}">${conf.doneLabel || '대시보드에서 확인'} →</a></div>` : '') : s.error_rows
           ? '<div class="notice warn" style="margin:14px 0 0">오류가 있는 행을 고치거나 제외해야 저장할 수 있습니다. 칸을 고친 뒤 [고친 값 반영 · 다시 검사]를 누르세요.</div>' : ''}
       </div>
       <div class="card">
@@ -211,7 +226,7 @@ const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: 
 const UPLOAD_LINKS = {
   mgmt: [['#/upload', '경영 데이터 업로드']],
   production: [['#/production/upload', '제조내역 업로드'], ['#/production/upload-orders', '수주서 업로드']],
-  service: [['#/service/reports/new', '출장보고서 입력'], ['#/prices/upload', '견적서 업로드']],
+  service: [['#/service/reports/new', '출장보고서 입력'], ['#/prices/upload', '부품 단가 데이터 업로드'], ['#/prices/new', '신규 부품 등록']],
 };
 export const history = {
   async render(main, ctx) {

@@ -12,7 +12,8 @@ import * as pricing from './lib/pricing.js';
 import * as production from './lib/production.js';
 import * as uploads from './lib/uploads.js';
 import * as service from './lib/service.js';
-import './lib/pdf-uploads.js'; // 수주서·출장보고서·견적서 PDF 업로드 규칙 등록
+import './lib/pdf-uploads.js'; // 수주서·출장보고서 PDF 업로드 규칙 등록
+import './lib/part-uploads.js'; // 부품 단가 데이터(CSV)·신규 부품(엑셀) 업로드 규칙 등록
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -533,25 +534,7 @@ app.get('/api/admin/default-perms', requirePerm('admin'), (_req, res) => res.jso
 app.use('/api/admin', admin);
 
 // ---------- 단가 (ITB2026에서 옮겨 옴) ----------
-// 제품 단가·원가: 원가·마진·커미션은 대외비 → 경영지원팀 열람 권한(경영지원팀·대표·관리자)만, 기준값 바꾸기는 경영지원 수정 권한. 캐시에 남지 않게 no-store
-const prices = express.Router();
-prices.use(requirePerm('mgmt'));
-prices.use(requireEditFor('mgmt'));
-prices.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-prices.get('/products', wrap(async (req, res) => {
-  await pricing.logAccess(req.user.id);
-  res.json(await pricing.productPrices(req.query));
-}));
-prices.get('/commission', wrap(async (req, res) => {
-  await pricing.logAccess(req.user.id);
-  res.json(await pricing.commissionCalc(req.query));
-}));
-prices.get('/settings', wrap(async (_req, res) => res.json(await pricing.settingHistory())));
-prices.post('/settings', wrap(async (req, res) => res.json(await pricing.saveSetting(req.body || {}, req.user.id))));
-prices.get('/access-log', wrap(async (_req, res) => res.json(await pricing.accessLog())));
-app.use('/api/pricing', prices);
-
-// 부품 단가(뉴토크 기준값·출장지별 단가): 서비스팀 열람 권한으로 조회, 입력·기준값 수정은 서비스팀 수정 권한
+// 부품 단가(뉴토크 기준값·출장지별 단가): 서비스팀 열람 권한으로 조회, 부품 등록·기준값 수정은 서비스팀 수정 권한
 const parts = express.Router();
 parts.use(requirePerm('service'));
 parts.use(requireEditFor('service'));
@@ -570,15 +553,24 @@ const sheetsSend = async (req, res, base, sheets) => {
 };
 const q = (v) => String(v || '').trim();
 parts.get('/catalog', wrap(async (req, res) => res.json(await pricing.catalogTable(q(req.query.q), q(req.query.category)))));
-parts.get('/catalog/choices', wrap(async (_req, res) => res.json(await pricing.catalogChoices())));
 parts.get('/catalog/export', wrap(async (req, res) => sheetsSend(req, res, `부품단가_${nowStr().slice(0, 10)}`, await pricing.catalogSheets(q(req.query.q), q(req.query.category)))));
+// 업로드 양식: ?kind=catalog(부품 단가 데이터·신규 부품) | company(출장지별 단가), ?format=csv 이면 CSV
+parts.get('/template', wrap(async (req, res) => {
+  const company = req.query.kind === 'company';
+  const sheet = company
+    ? ['출장지별 단가', [['파트넘버', 'a', 14], ['품목', 'b', 22], ['출장지', 'c', 18], ['단가', 'd', 12], ['적용 시작일', 'e', 13], ['비고', 'f', 24]],
+      [{ a: 'VX-05-A-01', b: 'Motor', c: '가상정수센터', d: 500000, e: '2026-03-10', f: '' }]]
+    : ['부품 단가', pricing.CATALOG_FIELDS.map(([, label], i) => [label, String(i), label === '품목' ? 24 : 16]),
+      [{ 0: '05 MOTOR', 1: 'VX-05-A-01', 2: 'Motor', 3: 'NTI-01 ~ 03', 4: 500000 }]];
+  await sheetsSend(req, res, company ? '출장지별단가_양식' : '부품단가_양식', [sheet]);
+}));
 parts.get('/companies', wrap(async (req, res) => res.json(await pricing.companyComparison(q(req.query.category)))));
 parts.get('/companies/export', wrap(async (req, res) => sheetsSend(req, res, `출장지별단가비교_${nowStr().slice(0, 10)}`, await pricing.companySheets(q(req.query.category)))));
 parts.get('/catalog/:id', wrap(async (req, res) => res.json(await pricing.catalogDetail(req.params.id))));
-parts.patch('/catalog/:id', wrap(async (req, res) => res.json(await pricing.setCatalogItem(req.params.id, req.body || {}))));
-parts.put('/standard', wrap(async (req, res) => res.json(await pricing.setStandard(req.body || {}))));
-parts.post('/prices', wrap(async (req, res) => res.status(201).json(await pricing.addPartPrice(req.body || {}, req.user.id))));
-parts.delete('/prices/:id', wrap(async (req, res) => { await pricing.deletePartPrice(req.params.id); res.json({ ok: true }); }));
+// 신규 부품 등록(한 건): 같은 파트넘버가 있으면 409 → overwrite: true로 다시 보내면 덮어씀
+parts.post('/catalog', wrap(async (req, res) => res.status(201).json(await pricing.saveCatalogItem(req.body || {}))));
+// 뉴토크 기준값(= 기준단가) 직접 고치기 (부품별 비교 표에서 두 번 눌러 입력)
+parts.patch('/catalog/:id', wrap(async (req, res) => res.json(await pricing.setListPrice(req.params.id, req.body || {}))));
 app.use('/api/parts', parts);
 
 // ---------- 생산팀 (ITB2026에서 옮겨 옴) ----------
@@ -616,7 +608,7 @@ prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await pro
 app.use('/api/production', prod);
 
 // ---------- 서비스팀 (ITB2026에서 옮겨 옴) ----------
-// 조회는 서비스팀 열람 권한, 보고서 직접 입력·요청처 지역 변경은 서비스팀 수정 권한
+// 조회는 서비스팀 열람 권한, 보고서 직접 입력은 서비스팀 수정 권한
 const svc = express.Router();
 svc.use(requirePerm('service'));
 svc.use(requireEditFor('service'));
@@ -626,8 +618,6 @@ svc.get('/reports', wrap(async (req, res) => res.json(await service.reportList(r
 svc.post('/reports', wrap(async (req, res) => res.status(201).json(await service.createReport(req.body || {}, req.user.id))));
 svc.get('/reports/:id', wrap(async (req, res) => res.json(await service.reportDetail(req.params.id))));
 svc.get('/form-choices', wrap(async (_req, res) => res.json(await service.formChoices())));
-svc.get('/requester-regions', wrap(async (_req, res) => res.json(await service.requesterRegions())));
-svc.patch('/requester-regions/:id', wrap(async (req, res) => res.json(await service.setRequesterRegion(req.params.id, req.body || {}))));
 app.use('/api/service', svc);
 
 // 팀 업로드 (추출 → 확인·수정 → 저장). 권한은 파일 종류를 맡은 팀의 수정 권한으로 lib/uploads.js에서 확인

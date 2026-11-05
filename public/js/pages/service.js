@@ -1,6 +1,6 @@
 // 서비스팀 화면 (ITB2026에서 옮겨 옴)
 //  대시보드: 출장 실적(횟수·유상/무상·월별) · 출장지 지도와 지역 순위(시·도/시·군) · 교체 부품 · A/S 모델 · 담당자
-//  출장보고서 목록·상세 / 입력(PDF 올리기·직접 입력) / 요청처 지역 관리
+//  출장보고서 목록·상세 / 입력(PDF 올리기·직접 입력)
 import { api, esc, toast, today } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip } from '../korea-map.js';
@@ -315,44 +315,4 @@ export const reportForm = {
       }
     });
   },
-};
-
-// ---------------- 요청처 지역 관리 (서비스팀 수정 권한) ----------------
-export const regions = {
-  async render(main) {
-    const d = await api('/api/service/requester-regions');
-    main.innerHTML = `
-      <div class="page-head"><div><h2>요청처 지역 관리</h2><div class="sub">출장보고서를 입력·업로드할 때 고른 시·도·시·군이 여기에 기억됩니다. 고치면 같은 요청처로 저장된 출장보고서의 지역도 함께 바뀝니다.</div></div></div>
-      <div class="card">${!d.results.length ? '<div class="empty">아직 기억된 요청처가 없습니다.</div>' : `
-        <div class="table-wrap"><table class="tbl"><thead><tr><th>요청처</th><th class="r">보고서</th><th>시·도</th><th>시·군</th><th></th></tr></thead>
-        <tbody>${d.results.map((r) => `<tr data-id="${r.id}">
-          <td><b>${esc(r.requester)}</b>${d.districts[r.region] && !r.district ? ' <span class="status-chip warning">시·군 미지정</span>' : ''}</td><td class="r">${r.report_count}건</td>
-          <td><select class="input" data-k="region">${d.regions.map((x) => `<option ${x === r.region ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
-          <td><select class="input" data-k="district">${districtOpts(d, r.region, r.district)}</select></td>
-          <td><button class="btn sm primary" data-save disabled>저장</button></td></tr>`).join('')}</tbody></table></div>`}</div>`;
-    const tbody = main.querySelector('tbody');
-    tbody?.addEventListener('change', (e) => {
-      const tr = e.target.closest('tr');
-      if (e.target.dataset.k === 'region') tr.querySelector('[data-k=district]').innerHTML = districtOpts(d, e.target.value, '');
-      tr.querySelector('[data-save]').disabled = false;
-      tr.classList.add('changed');
-    });
-    tbody?.addEventListener('click', async (e) => {
-      if (!('save' in e.target.dataset)) return;
-      const tr = e.target.closest('tr');
-      const region = tr.querySelector('[data-k=region]').value;
-      const district = tr.querySelector('[data-k=district]').value;
-      try {
-        const r = await api(`/api/service/requester-regions/${tr.dataset.id}`, { method: 'PATCH', body: { region, district } });
-        toast(`${r.requester}: ${r.region} ${r.district} 저장 (출장보고서 ${r.report_count}건의 지역도 바꿈)`);
-        e.target.disabled = true;
-        tr.classList.remove('changed');
-        tr.querySelector('td:nth-child(2)').textContent = `${r.report_count}건`;
-      } catch (err) { toast(err.message, true); }
-    });
-  },
-};
-const districtOpts = (d, region, sel) => {
-  const list = d.districts[region] || [];
-  return list.length ? `<option value="">선택</option>${list.map((x) => `<option ${x === sel ? 'selected' : ''}>${x}</option>`).join('')}` : '<option value="">없음</option>';
 };

@@ -161,7 +161,7 @@ export async function render(main, ctx) {
   let fullBackup = false; // '경영지원 관리 (전체)' 내려받기 파일인지
   let backupRange = null; // 기간(월·분기·연간) 내려받기 파일이면 { from, to, label }
 
-  // 화면 배치는 팀 업로드(제조내역·수주서·출장보고서·견적서)와 같게: 머리 + 파일 고르기 카드(끌어 놓기·안내) → 확인 카드
+  // 화면 배치는 팀 업로드(제조내역·수주서·출장보고서·부품 단가)와 같게: 머리 + 파일 고르기 카드(끌어 놓기·안내) → 확인 카드
   main.innerHTML = `
     <div class="page-head">
       <div><h2>경영 데이터 엑셀 업로드</h2><div class="sub">목표·월별실적·매출내역·미수금 엑셀, "경영지원 관리" 양식 파일을 한 번에 반영합니다.</div></div>

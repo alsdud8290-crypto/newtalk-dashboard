@@ -7,8 +7,6 @@ import * as upload from './pages/upload.js';
 import * as exportPage from './pages/export.js';
 import * as users from './pages/users.js';
 import * as partPrices from './pages/part-prices.js';
-import * as partPriceInput from './pages/part-price-input.js';
-import * as pricing from './pages/pricing.js';
 import * as production from './pages/production.js';
 import { records as prodRecords, orders as prodOrders, serials as prodSerials } from './pages/production-lists.js';
 import * as prodCalendar from './pages/production-calendar.js';
@@ -20,9 +18,8 @@ const state = { user: null, meta: null, cleanup: null };
 
 // perm: 필요한 열람 권한(배열이면 그중 하나), edit: 그 화면 자체가 입력용이라 수정 권한이 필요한 팀
 // 메뉴·라우트 모두 이 표 기준으로 노출/차단하고, 서버 API도 같은 기준으로 다시 확인한다
-// 단가: 부품 단가는 서비스팀, 제품 단가·원가(대외비)는 경영지원팀 열람 권한
+// 단가: 부품 단가는 서비스팀 열람 권한 (업로드·신규 부품 등록은 서비스팀 수정 권한)
 const PART_PERMS = 'service';
-const PRICING_PERMS = 'mgmt';
 const ROUTES = {
   '/dashboard': { page: dashboard, perm: 'mgmt', title: '경영 현황' },
   '/input/monthly': { page: monthly, perm: 'mgmt', title: '월별 실적·목표' },
@@ -39,16 +36,14 @@ const ROUTES = {
   '/production/upload': { page: teamUpload, perm: 'production', edit: 'production', title: '제조내역 업로드', kind: 'manufacturing_excel' },
   '/production/upload-orders': { page: teamUpload, perm: 'production', edit: 'production', title: '수주서 PDF 업로드', kind: 'sales_order_pdf' },
   '/service/uploads': { page: teamUpload.history, perm: 'service', edit: 'service', title: '업로드 이력', team: 'service' },
-  '/prices/upload': { page: teamUpload, perm: PART_PERMS, edit: 'service', title: '견적서 PDF 업로드', kind: 'quote_pdf' },
   '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
   '/service': { page: servicePage, perm: 'service', title: '서비스팀 대시보드' },
   '/service/reports': { page: servicePage.reports, perm: 'service', title: '출장보고서 목록' },
   '/service/reports/new': { page: servicePage.reportForm, perm: 'service', edit: 'service', title: '출장보고서 입력' },
-  '/service/regions': { page: servicePage.regions, perm: 'service', edit: 'service', title: '요청처 지역 관리' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
-  '/prices/input': { page: partPriceInput, perm: PART_PERMS, edit: 'service', title: '단가 직접 입력' },
-  '/prices/products': { page: pricing, perm: PRICING_PERMS, title: '제품 단가·원가' },
+  '/prices/upload': { page: partPrices, perm: PART_PERMS, edit: 'service', title: '부품 단가 데이터 업로드', tab: 'upload' },
+  '/prices/new': { page: partPrices, perm: PART_PERMS, edit: 'service', title: '신규 부품 등록', tab: 'new' },
   '/admin/users': { page: users, perm: 'admin', title: '사용자·권한 관리' },
 };
 
@@ -87,16 +82,14 @@ const MENU = [
     ['/service', '서비스 대시보드'],
     ['/service/reports', '출장보고서 목록'],
     ['/service/reports/new', '출장보고서 입력'],
-    ['/service/regions', '요청처 지역 관리'],
     ['/service/uploads', '업로드 이력'],
   ] },
   // 하위 항목 세 번째 값: 그 항목만의 권한 (없으면 묶음 권한)
   { type: 'group', label: '단가', icon: 'price', perm: PART_PERMS, items: [
     ['/prices/parts', '부품별 비교'],
     ['/prices/companies', '출장지별 비교'],
-    ['/prices/upload', '견적서 업로드'],
-    ['/prices/input', '단가 직접 입력'],
-    ['/prices/products', '제품 단가·원가', PRICING_PERMS],
+    ['/prices/upload', '부품 단가 데이터 업로드'],
+    ['/prices/new', '신규 부품 등록'],
   ] },
   { type: 'item', href: '/admin/users', label: '관리자', icon: 'admin', perm: 'admin' },
 ];
