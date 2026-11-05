@@ -93,6 +93,15 @@ const canEdit = (team) => !!state.user?.perms?.[`edit_${team}`];
 const canOpen = (href) => { const r = ROUTES[href]; return !r || (can(r.perm) && (!r.edit || canEdit(r.edit))); };
 const firstAllowed = () => Object.keys(ROUTES).find(canOpen);
 
+// 화면 위 탭 (단가 화면처럼): 경영지원·생산·서비스 묶음의 다른 메뉴로 바로 이동. 경영지원 묶음 앞에는 경영 대시보드
+const TAB_GROUPS = MENU.filter((g) => g.type === 'group' && ['경영지원', '생산', '서비스'].includes(g.label))
+  .map((g) => (g.label === '경영지원' ? [['/dashboard', '경영 대시보드'], ...g.items] : g.items));
+function pageTabs(target) {
+  const items = TAB_GROUPS.find((list) => list.some(([href]) => href === target))?.filter(([href]) => canOpen(href));
+  if (!items || items.length < 2) return '';
+  return `<nav class="tabs page-tabs">${items.map(([href, label]) => `<a href="#${href}" class="${href === target ? 'active' : ''}">${esc(label)}</a>`).join('')}</nav>`;
+}
+
 const BRAND = `
   <span class="brand">
     <img class="mark" src="/img/logo-mark.png" alt="">
@@ -220,6 +229,9 @@ async function route() {
   main.innerHTML = '<div class="empty">불러오는 중…</div>';
   try {
     state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, kind: r.kind, canEdit, reloadMeta });
+    const tabs = pageTabs(target);
+    const head = main.querySelector(':scope > .page-head');
+    if (tabs) (head ? head.insertAdjacentHTML('afterend', tabs) : main.insertAdjacentHTML('afterbegin', tabs));
   } catch (err) {
     main.innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
   }

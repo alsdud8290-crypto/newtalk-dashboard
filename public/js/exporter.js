@@ -1,4 +1,4 @@
-// 내보내기 공통: 입력 데이터 → 엑셀/CSV, 화면 영역 → PNG 이미지
+// 내보내기 공통: 입력 데이터 → 엑셀/CSV, 화면 영역 → PDF
 // 엑셀 시트·열 이름은 업로드 양식과 같다 → 내려받은 파일을 그대로 다시 업로드(백업·복원)할 수 있다.
 import { toast } from './core.js';
 
@@ -109,57 +109,58 @@ export function saveBlob(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// 화면 영역을 PNG로 저장 (그래프·제목·범례 포함). data-no-export 요소는 제외
-export async function downloadImage(el, filename) {
-  if (!window.html2canvas) return toast('이미지 저장 기능을 불러오지 못했습니다.', true);
-  try {
-    const canvas = await html2canvas(el, {
-      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
-      scale: Math.max(2, window.devicePixelRatio || 1),
-      ignoreElements: (node) => node.hasAttribute?.('data-no-export'),
-      logging: false,
-    });
-    canvas.toBlob((blob) => (blob ? saveBlob(`${filename}.png`, blob) : toast('이미지를 만들지 못했습니다.', true)), 'image/png');
-  } catch (err) {
-    toast(`이미지 저장 실패: ${err.message}`, true);
-  }
-}
-
-// 화면 영역 → PDF (A4 가로). 카드가 페이지 경계에서 잘리지 않게 카드 아래쪽에서 페이지를 나눈다.
-//  PDF는 직접 만든다: 페이지마다 JPEG 그림 한 장 (외부 라이브러리 없음)
-export async function downloadPdf(el, filename) {
+// 화면 영역 → PDF (A4). maxPages 안에서 글자가 가장 크게 보이도록 쪽 수(1·2)와 가로·세로를 고른다.
+//  2쪽이면 화면의 큰 덩어리(카드 줄) 경계 중 가운데에 가장 가까운 곳에서 나눈다. PDF는 직접 만든다 (쪽마다 JPEG 한 장)
+export async function downloadPdf(el, filename, { maxPages = 1 } = {}) {
   if (!window.html2canvas) return toast('PDF 저장 기능을 불러오지 못했습니다.', true);
   try {
     const scale = 2;
-    const canvas = await html2canvas(el, {
-      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
-      scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
-    });
-    const top = el.getBoundingClientRect().top;
-    const cuts = [...el.querySelectorAll('.card, .section-title, .notice, .kpis, .grid')]
-      .map((n) => Math.round((n.getBoundingClientRect().bottom - top) * scale)).sort((a, b) => a - b);
-    const [pw, ph, margin] = [842, 595, 24]; // A4 가로 (pt)
-    const fit = (pw - margin * 2) / canvas.width;
-    const pageH = Math.floor((ph - margin * 2) / fit);
-    const pages = [];
-    for (let y = 0; y < canvas.height;) {
-      let end = Math.min(canvas.height, y + pageH);
-      if (end < canvas.height) {
-        const c = cuts.filter((v) => v > y + pageH * 0.4 && v <= end).pop();
-        if (c) end = c + 2 * scale;
+    // 왼쪽 끝에 붙은 요소(섹션 번호 등)가 잘리지 않게 찍는 동안만 여백을 둔다. 페이지 나눌 위치도 그 상태에서 잰다
+    const pad = el.style.padding;
+    const cs = getComputedStyle(el);
+    el.style.padding = ['Top', 'Right', 'Bottom', 'Left'].map((k) => `${parseFloat(cs[`padding${k}`]) + 8}px`).join(' ');
+    let canvas;
+    let cuts;
+    try {
+      const top = el.getBoundingClientRect().top;
+      const blocks = [...el.children].flatMap((c) => (c.classList.contains('section-block') ? [...c.children] : [c]));
+      cuts = blocks.map((n) => Math.round((n.getBoundingClientRect().bottom - top) * scale));
+      canvas = await html2canvas(el, {
+        backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+        scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
+      });
+    } finally { el.style.padding = pad; }
+    const W = canvas.width;
+    const H = canvas.height;
+    cuts = cuts.filter((v) => v > 0 && v < H);
+    const margin = 24;
+    const plans = [[[0, H]]];
+    if (maxPages >= 2 && cuts.length) {
+      const c = cuts.reduce((best, v) => (Math.abs(v - H / 2) < Math.abs(best - H / 2) ? v : best));
+      plans.push([[0, c + 2 * scale], [c + 2 * scale, H]]);
+    }
+    let pick = null;
+    for (const parts of plans) {
+      for (const [pw, ph] of [[595, 842], [842, 595]]) {
+        const tallest = Math.max(...parts.map(([y0, y1]) => y1 - y0));
+        const fit = Math.min((pw - margin * 2) / W, (ph - margin * 2) / tallest);
+        // 1쪽이 2쪽보다 조금만 작으면 1쪽을 고른다
+        const score = fit * (parts.length === 1 ? 1.18 : 1);
+        if (!pick || score > pick.score) pick = { parts, pw, ph, fit, score };
       }
+    }
+    const pages = pick.parts.map(([y0, y1]) => {
       const part = document.createElement('canvas');
-      part.width = canvas.width;
-      part.height = end - y;
+      part.width = W;
+      part.height = Math.max(1, Math.min(H, y1) - y0);
       const ctx = part.getContext('2d');
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, part.width, part.height);
-      ctx.drawImage(canvas, 0, y, canvas.width, part.height, 0, 0, canvas.width, part.height);
-      const bin = atob(part.toDataURL('image/jpeg', 0.9).split(',')[1]);
-      pages.push({ w: part.width, h: part.height, jpg: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)) });
-      y = end;
-    }
-    saveBlob(`${filename}.pdf`, pdfFromImages(pages, pw, ph, margin, fit));
+      ctx.drawImage(canvas, 0, y0, W, part.height, 0, 0, W, part.height);
+      const bin = atob(part.toDataURL('image/jpeg', 0.92).split(',')[1]);
+      return { w: part.width, h: part.height, jpg: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)) };
+    });
+    saveBlob(`${filename}.pdf`, pdfFromImages(pages, pick.pw, pick.ph, margin, pick.fit));
   } catch (err) {
     toast(`PDF 저장 실패: ${err.message}`, true);
   }
@@ -177,15 +178,15 @@ function pdfFromImages(pages, pw, ph, margin, fit) {
     if (stream) { push('stream\n'); push(stream); push('\nendstream\n'); }
     push('endobj\n');
   };
-  push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  push('%PDF-1.4\n');
   const kids = pages.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
   obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
   pages.forEach((p, i) => {
     const [pg, img, cs] = [3 + i * 3, 4 + i * 3, 5 + i * 3];
-    const w = (p.w * fit).toFixed(2);
-    const h = (p.h * fit).toFixed(2);
-    const draw = enc.encode(`q ${w} 0 0 ${h} ${margin} ${(ph - margin - p.h * fit).toFixed(2)} cm /Im0 Do Q`);
+    const w = p.w * fit;
+    const h = p.h * fit;
+    const draw = enc.encode(`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${((pw - w) / 2).toFixed(2)} ${(ph - margin - h).toFixed(2)} cm /Im0 Do Q`);
     obj(pg, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${img} 0 R >> >> /Contents ${cs} 0 R >>`);
     obj(img, `<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpg.length} >>`, p.jpg);
     obj(cs, `<< /Length ${draw.length} >>`, draw);
@@ -304,8 +305,8 @@ export function bindPeriodDownload(root, id, opts) {
   });
 }
 
-// ---------- 카드별 [⬇] 내려받기 (이미지 PNG · 데이터 CSV) ----------
-// 카드 머리 정리: 설명(hint)은 제목 아래 작은 줄로, 오른쪽에는 상태 배지 + [⬇] 내려받기 메뉴(PNG/CSV)
+// ---------- 카드별 [⬇] 내려받기 (PDF · 데이터 CSV) ----------
+// 카드 머리 정리: 설명(hint)은 제목 아래 작은 줄로, 오른쪽에는 상태 배지 + [⬇] 내려받기 메뉴(PDF/CSV)
 export function addCardMenus(root) {
   root.querySelectorAll('[data-card]').forEach((card) => {
     const head = card.querySelector(':scope > .card-head, :scope > .section-title');
@@ -333,7 +334,7 @@ export function addCardMenus(root) {
     menu.innerHTML = `
       <button type="button" class="btn sm dl-btn" data-dl-toggle title="내려받기" aria-haspopup="menu">⬇</button>
       <div class="dl-pop" role="menu" hidden>
-        <button type="button" data-export="png" role="menuitem">이미지 (PNG)</button>
+        <button type="button" data-export="pdf" role="menuitem">PDF</button>
         <button type="button" data-export="csv" role="menuitem">데이터 (CSV)</button>
       </div>`;
     tools.append(menu);
@@ -369,7 +370,7 @@ export function bindCardMenus(root, opts) {
     const name = fileSafe(`${prefix}_${data.name}_${label()}_${stamp()}`);
     if (btn.dataset.export === 'csv') return downloadCsv(name, data);
     btn.disabled = true;
-    await downloadImage(card, name);
+    await downloadPdf(card, name);
     btn.disabled = false;
   });
 }

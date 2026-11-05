@@ -126,7 +126,7 @@ export async function render(main) {
     main.querySelector('#sv-level').addEventListener('click', (e) => { const b = e.target.closest('[data-l]'); if (b && b.dataset.l !== level) { level = b.dataset.l; draw(); } });
   }
 
-  // 카드별 [⬇] → 이미지(PNG) · 데이터(CSV). 표는 화면에 보이는 내용 그대로
+  // 카드별 [⬇] → PDF · 데이터(CSV). 표는 화면에 보이는 내용 그대로
   const share = (rows) => { const t = rows.reduce((a, r) => a + r.quantity, 0); return rows.map((r) => [r.name, r.quantity, t ? Math.round(r.quantity / t * 1000) / 10 : 0]); };
   function cardData(key) {
     if (!data) return null;

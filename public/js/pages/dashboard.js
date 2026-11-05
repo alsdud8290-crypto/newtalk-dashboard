@@ -1,6 +1,6 @@
 import { api, esc, won, pct, period, setPeriod, yearOptions, toast } from '../core.js';
 import { donut, gauge, compareBar, hideTooltip, INDUSTRY_COLORS, seriesColor, SERIES, OTHER } from '../charts.js';
-import { downloadXlsx, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
+import { downloadXlsx, downloadCsvZip, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
 
 let charts = [];
 let loadSeq = 0; // 늦게 도착한 이전 조회 결과는 버린다 (빠른 연속 클릭·화면 이동 대비)
@@ -9,15 +9,14 @@ let currentAi = null;
 
 const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
 const SALES_COLORS = { 제품매출: SERIES[0], 상품매출: SERIES[1], 용역매출: SERIES[2], 영업외수익: SERIES[3] };
-const COST_COLORS = { 상품: SERIES[0], 원재료: SERIES[1], 경비: SERIES[2], 기타: SERIES[3] };
+const COST_COLORS = { '상품 매입': SERIES[0], 판관비: SERIES[1], 영업외비용: SERIES[2], '원재료 매입': SERIES[3], 노무비: SERIES[4], 경비: SERIES[5] };
 const salesMixOf = (c) => [
   { label: '제품매출', value: c.sales.product }, { label: '상품매출', value: c.sales.goods },
   { label: '용역매출', value: c.sales.service }, { label: '영업외수익', value: c.sales.nonOp },
 ];
-// 지출 구성: 상품(상품 매입) · 원재료(원재료 매입) · 경비(제조 경비) · 기타(판관비 + 노무비 + 영업외비용)
 const costMixOf = (c) => [
-  { label: '상품', value: c.costs.productPurchase }, { label: '원재료', value: c.costs.materialPurchase },
-  { label: '경비', value: c.costs.expense }, { label: '기타', value: c.costs.sga + c.costs.labor + c.costs.nonOp },
+  { label: '상품 매입', value: c.costs.productPurchase }, { label: '판관비', value: c.costs.sga }, { label: '영업외비용', value: c.costs.nonOp },
+  { label: '원재료 매입', value: c.costs.materialPurchase }, { label: '노무비', value: c.costs.labor }, { label: '경비', value: c.costs.expense },
 ];
 const nextLabel = { month: '다음 달', quarter: '다음 분기', year: '내년', range: '다음 기간' };
 const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
@@ -102,7 +101,7 @@ export async function render(main) {
       <div class="filters">
         <div class="filters" id="d-filters">${periodControl()}</div>
         <button type="button" class="btn" id="d-pdf" title="대시보드 전체를 PDF로 저장">⬇ PDF로 저장</button>
-        <button type="button" class="btn" id="d-xlsx" title="대시보드 수치를 엑셀로 저장">⬇ 수치 엑셀</button>
+        ${periodDownloadButton('d-dl')}
       </div>
     </div>
     <div id="d-body"><div class="empty">불러오는 중…</div></div>`;
@@ -134,11 +133,18 @@ export async function render(main) {
   main.querySelector('#d-pdf').addEventListener('click', async (e) => {
     if (!current) return;
     e.target.disabled = true;
-    await downloadPdf(main.querySelector('#d-body'), fileSafe(`뉴토크코리아_대시보드_${current.label}_${stamp()}`));
+    await downloadPdf(main.querySelector('#d-body'), fileSafe(`뉴토크코리아_대시보드_${current.label}_${stamp()}`), { maxPages: 2 });
     e.target.disabled = false;
   });
-  main.querySelector('#d-xlsx').addEventListener('click', () => current && exportNumbers(current));
-  // 카드별 [PNG] [CSV] 저장
+  // 수치 내려받기: 기간(연간·분기·월)을 골라 카드별 표를 엑셀(시트마다) 또는 CSV(ZIP)로
+  const curPeriod = () => ({ mode: period.mode === 'range' ? 'year' : period.mode, month: period.mode === 'month' ? period.period : undefined, quarter: period.mode === 'quarter' ? period.period : undefined });
+  bindPeriodDownload(main, 'd-dl', {
+    year: period.year, mode: curPeriod().mode, modes: ['year', 'quarter', 'month'], currentYear: () => (period.mode === 'range' ? Number(period.to.slice(0, 4)) : period.year), current: curPeriod,
+    hint: '대시보드 카드별 수치를 표로 담습니다.',
+    onExcel: async (p) => { const d = await numbersFor(p); downloadXlsx(d.file, d.sheets); },
+    onCsv: async (p) => { const d = await numbersFor(p); await downloadCsvZip(`${d.file}_CSV`, d.sheets.map((sh) => ({ name: fileSafe(sh.name), sheet: sh }))); },
+  });
+  // 카드별 [PDF] [CSV] 저장
   bindCardMenus(main, { getData: (key) => current && cardData(key, current), prefix: '뉴토크코리아', label: () => current?.label || '' });
 
   await load(main);
@@ -232,7 +238,7 @@ async function load(main) {
         </div>
       </div>
       ${donutCard('c-sales-mix', '매출 구성', '제품 · 상품 · 용역 · 영업외수익', won(cur.sales.total), s.short)}
-      ${donutCard('c-cost-mix', '지출 구성', '상품 · 원재료 · 경비 · 기타(판관비·노무비·영업외비용)', won(cur.costs.total), s.short)}
+      ${donutCard('c-cost-mix', '지출 구성', '상품 매입 · 판관비 · 영업외비용 · 원재료 · 노무비 · 경비', won(cur.costs.total), s.short)}
     </div>
 
     <div class="section-title"><span class="num-badge">03</span>추이 및 분석</div>
@@ -287,7 +293,7 @@ const share = (list) => {
 };
 
 // 카드별 표 데이터 { name, aoa, formats } — 카드 CSV와 "수치 엑셀"이 같은 정의를 쓴다
-function cardData(key, s) {
+function cardData(key, s, ai = currentAi) {
   const c = s.current;
   const r = s.receivables;
   const a = s.achievement;
@@ -334,7 +340,6 @@ function cardData(key, s) {
     case 'c-industry': return { name: '산업 분야별 매출', aoa: [['산업 분야', '매출', '비중'], ...share(s.industry)], formats: [null, M, P] };
     case 'c-series': return { name: '제품별 매출', aoa: [['제품 시리즈', '매출', '비중'], ...share(s.series)], formats: [null, M, P] };
     case 'ai': {
-      const ai = currentAi;
       const rows = ai ? [['요약', ai.headline], ...(ai.status || []).map((t) => ['이번 기간 현황', t]),
         ...(ai.shortfalls || []).map((t) => ['부족한 점·주의', t]), ...(ai.nextActions || []).map((t) => ['개선할 점', t]),
         ['작성', `${ai.source === 'claude' ? 'Claude AI' : '규칙 기반 자동 요약'} · ${ai.createdAt}`]] : [['안내', '아직 분석이 없습니다.']];
@@ -346,13 +351,17 @@ function cardData(key, s) {
 
 const CARD_KEYS = ['kpi', 'quarter', 'annual', 'c-sales-mix', 'c-cost-mix', 'trend', 'c-industry', 'c-series', 'ai'];
 
-// 대시보드 수치 엑셀: 카드별 표를 시트로
-function exportNumbers(s) {
-  const sheets = CARD_KEYS.filter((k) => k !== 'quarter' || s.target).map((k) => cardData(k, s));
-  downloadXlsx(fileSafe(`뉴토크코리아_대시보드수치_${s.label}_${stamp()}`), [
-    { name: '조회조건', aoa: [['조회 기간', s.label], ['기간', `${s.from} ~ ${s.to}`], [`${s.year}년 연간 목표`, s.target], ['내려받은 날짜', stamp()]], formats: [null, M] },
-    ...sheets,
-  ]);
+// 대시보드 수치: 고른 기간(YYYY · YYYY-Qn · YYYY-MM)의 요약을 받아 카드별 표를 시트로
+async function numbersFor(p) {
+  const m = /^(\d{4})(?:-Q(\d)|-(\d{2}))?$/.exec(p || '');
+  if (!m) throw new Error('기간을 골라 주세요.');
+  const q = m[2] ? `mode=quarter&year=${m[1]}&period=${m[2]}` : m[3] ? `mode=month&year=${m[1]}&period=${Number(m[3])}` : `mode=year&year=${m[1]}`;
+  const [s, ai] = await Promise.all([api(`/api/mgmt/summary?${q}`), api(`/api/mgmt/ai-comment?${q}`)]);
+  const sheets = CARD_KEYS.filter((k) => k !== 'quarter' || s.target).map((k) => cardData(k, s, ai));
+  return {
+    file: fileSafe(`뉴토크코리아_대시보드수치_${s.label}_${stamp()}`),
+    sheets: [{ name: '조회조건', aoa: [['조회 기간', s.label], ['기간', `${s.from} ~ ${s.to}`], [`${s.year}년 연간 목표`, s.target], ['내려받은 날짜', stamp()]], formats: [null, M] }, ...sheets],
+  };
 }
 
 function trendHint(s) {
