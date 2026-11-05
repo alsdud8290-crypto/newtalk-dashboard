@@ -40,7 +40,7 @@ export async function render(main, ctx) {
     </div>
     <div class="card">
       <div class="card-head">
-        <div class="ttl"><h3 id="m-title"></h3><span class="hint">미수금 총액은 그 달 말 기준 잔액을 직접 입력합니다</span></div>
+        <div class="ttl"><h3 id="m-title"></h3><span class="hint">미수금 총액은 그 달 말 기준 잔액을 직접 입력하거나, [경영 데이터 업로드]에 경영지원 관리 엑셀을 올리면 미수금 현황 합계로 자동 입력됩니다</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${periodDownloadButton('m-dl')}
           <button class="btn sm" id="m-fill">매출 내역 합계로 매출 채우기</button>

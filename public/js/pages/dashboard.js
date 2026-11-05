@@ -212,7 +212,7 @@ async function load(main) {
       <div class="card kpi">
         <div class="k-label">미수금</div>
         ${kv(r.outstanding)}
-        <div class="k-meta">${r.month ? `${Number(r.month.slice(5))}월 말 기준 미수금 총액` : '월별 실적에 미수금 총액이 입력되지 않았습니다'}</div>
+        <div class="k-meta">${r.month ? `${Number(r.month.slice(5))}월 말 기준 미수금 총액` : '미수금 총액이 없습니다 (월별 실적에 직접 입력 또는 경영지원 관리 엑셀 업로드)'}</div>
         <div class="k-lines">
           ${delta('직전 대비', r.outstanding, r.prev, true)}
           ${delta('전년 동기 대비', r.outstanding, r.lastYearSame, true)}
