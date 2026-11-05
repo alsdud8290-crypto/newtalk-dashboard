@@ -386,7 +386,7 @@ export async function render(main, ctx) {
       }
       for (const x of salesFiles) if (x.rows.length && !/^\d{4}-\d{2}$/.test(x.month || '')) throw new Error(`${x.file}: 매출자료의 기준월을 골라 주세요.`);
       // 손익계산서·제조원가명세서 → 그 달 월별 실적 (파일에 있는 칸만 덮어씀)
-      const stmtItems = stmtSheets.filter((x) => !x.empty).map((x) => ({ file: x.file, title: x.title, month: x.month, values: x.values }));
+      const stmtItems = stmtSheets.filter((x) => !x.empty).map((x) => ({ file: x.file, title: x.title, type: x.type, month: x.month, values: x.values, lines: x.lines }));
       if (stmtItems.length) await api('/api/mgmt/statements/apply', { method: 'POST', body: { items: stmtItems } });
       // 매출자료 → 매출 내역 (같은 *ID는 덮어씀)
       const salesRows = salesFiles.flatMap((x) => x.rows.map((r) => ({ ...r, file: String(x.file).normalize('NFC'), date: `${x.month}-01`, note: '' })));

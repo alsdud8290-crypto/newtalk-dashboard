@@ -219,7 +219,7 @@ export async function render(main, ctx) {
       if (dirty && !window.confirm('표에 저장하지 않은 변경 사항이 있습니다. 반영하면 표를 다시 불러와 그 변경 사항은 사라집니다. 계속할까요?')) return;
       e.target.disabled = true;
       try {
-        const items = usable.map((p) => ({ file: p.file, title: p.title, month: p.month, values: p.values }));
+        const items = usable.map((p) => ({ file: p.file, title: p.title, type: p.type, month: p.month, values: p.values, lines: p.lines }));
         await api('/api/mgmt/statements/apply', { method: 'POST', body: { items } });
         const months = [...new Set(items.map((x) => x.month))].sort();
         toast(`${months.join(', ')} 실적에 반영했습니다.`);

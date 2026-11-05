@@ -277,6 +277,14 @@ mgmt.post('/statements/apply', wrap(async (req, res) => {
     stmts.push([`INSERT INTO monthly (year, month, ${fields.join(', ')}, updated_at) VALUES (?, ?, ${fields.map(() => '?').join(', ')}, ?)
                  ON CONFLICT(year, month) DO UPDATE SET ${fields.map((f) => `${f} = excluded.${f}`).join(', ')}, updated_at = excluded.updated_at`,
     [+m[1], +m[2], ...fields.map((f) => num(it.values[f])), nowStr()]]);
+    // 명세서의 모든 과목 행도 저장 → 내려받으면 올린 파일처럼 빈칸 없이 나옴
+    const lines = Array.isArray(it.lines) ? it.lines.slice(0, 300).filter((r) => Array.isArray(r))
+      .map((r) => [String(r[0] ?? '').slice(0, 100), ...[r[1], r[2]].map((v) => (v === null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v)))]) : [];
+    if (['pl', 'mc'].includes(it.type) && lines.length) {
+      stmts.push([`INSERT INTO statement_lines (year, month, kind, lines, updated_at) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(year, month, kind) DO UPDATE SET lines = excluded.lines, updated_at = excluded.updated_at`,
+      [+m[1], +m[2], it.type, JSON.stringify(lines), nowStr()]]);
+    }
   }
   if (!stmts.length) throw new HttpError(400, '저장할 금액이 없습니다.');
   await db.batch(stmts);
@@ -522,8 +530,11 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   const monthlyBy = async () => Object.fromEntries((await src.monthly()).map((r) => [`${r.year}-${p2(r.month)}`, r]));
   const salesBy = async () => (await sales()).reduce((m, r) => ((m[r.date.slice(0, 7)] ||= []).push(r), m), {});
   // 시트 목록 [이름, aoa, 쓰기 함수] — 엑셀·CSV 공통
-  const stmtSheets = (months, by) => months.flatMap((m) => ['pl', 'mc'].map((k) => [stmt.statementSheetName(k, m), stmt.statementAoa(k, m, by[m] || null),
-    (ws) => stmt.writeStatementSheet(ws, k, m, by[m] || null)]));
+  // 그 달에 올린 명세서가 있으면 과목 행 그대로 (key 'YYYY-MM|pl')
+  const linesBy = async () => Object.fromEntries((await db.all('SELECT year, month, kind, lines FROM statement_lines'))
+    .map((r) => [`${r.year}-${p2(r.month)}|${r.kind}`, JSON.parse(r.lines)]));
+  const stmtSheets = (months, by, lb = {}) => months.flatMap((m) => ['pl', 'mc'].map((k) => [stmt.statementSheetName(k, m), stmt.statementAoa(k, m, by[m] || null, lb[`${m}|${k}`]),
+    (ws) => stmt.writeStatementSheet(ws, k, m, by[m] || null, lb[`${m}|${k}`])]));
   const salesSheets = (months, by) => months.filter((m) => by[m]?.length || months.length === 1).map((m) => {
     const aoa = stmt.salesFileAoa(by[m] || []);
     return [stmt.salesSheetName(m), aoa, (ws) => stmt.writeAoaTable(ws, aoa, [14, 14, 18, 9, 15, 26, 40, 26, 15], [9])];
@@ -549,7 +560,7 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   };
   const csv = req.query.format === 'csv';
   if (kind === 'monthly') {
-    const sheets = stmtSheets(await monthsOf(), await monthlyBy());
+    const sheets = stmtSheets(await monthsOf(), await monthlyBy(), await linesBy());
     return csv ? sendCsv(`월별실적_${scopeName}`, sheets) : sendSheets(`손익계산서·제조원가명세서_${scopeName}`, sheets);
   }
   if (kind === 'sales') {
@@ -582,7 +593,7 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
           : [{ section: 'ar', grp: 'collected', code: '', name: '미수금 총액 (월별 실적 입력값)', balance: total, memo: '', red: 0 }];
       }
     }
-    const sheets = [...(tpl || tRows.length ? [targetSheet(tRows)] : []), ...stmtSheets(months, by), ...salesSheets(tpl ? months : months.filter((m) => sby[m]?.length), sby)];
+    const sheets = [...(tpl || tRows.length ? [targetSheet(tRows)] : []), ...stmtSheets(months, by, tpl ? {} : await linesBy()), ...salesSheets(tpl ? months : months.filter((m) => sby[m]?.length), sby)];
     if (csv) {
       // 미수금(경영지원 관리 양식)은 CSV로는 표 하나로: 기준월·구분·코드·거래처명·잔액·적요
       const grp = { long: '장기 미수', collected: '당월 수금', scheduled: '수금 예정', normal: '' };
