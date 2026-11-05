@@ -44,7 +44,7 @@ const SCHEMAS = {
 
 const INDUSTRY_ALIASES = {
   상하수도: ['상하수도', '상/하수도', '상수도', '하수도', '수도', '정수장', '하수처리'],
-  발전소: ['발전소', '발전'], 가스: ['가스'], 오일: ['오일', 'oil'], 석유: ['석유', '정유', '석유화학'],
+  발전소: ['발전소', '발전'], '가스·오일·석유화학': ['가스', '오일', 'oil', '석유', '정유'],
   '민간 플랜트': ['민간플랜트', '민간 플랜트', '플랜트'], 기타: ['기타'],
 };
 
@@ -258,7 +258,7 @@ export async function render(main, ctx) {
       <div style="margin:16px 0 8px"><b>경영지원 관리 (회사 양식)</b> <span class="badge blue">${ledgerSheets.length}개월</span></div>
       <div class="notice" style="margin-bottom:10px">시트마다 기준월을 확인해 주세요. 저장하면
         <b>미수금 현황(외상매출금) 합계 → 월별 실적 미수금 총액</b>,
-        <b>매입 지출(외상매입금) → 월별 실적 상품·원재료 매입</b>, <b>경비 지출(미지급비용-직원) → 경비</b>, <b>기타 지출(미지급비용-업체) → 판관비</b>로 그 달에 반영됩니다${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
+그 달에 반영됩니다. 매입·경비·기타 지출 행은 보관만 하고 월별 실적 지출은 바꾸지 않습니다(지출은 손익계산서·제조원가명세서 기준)${usable.some((p) => p.type === 'monthly') ? ' (월별실적 시트에 있는 달은 그 시트 값을 씁니다)' : ''}.</div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>파일 › 시트</th><th>기준월</th><th>건수</th></tr></thead><tbody>
       ${ledgerSheets.map((sh, k) => `<tr><td>${esc(sh.file)} › ${esc(sh.sheet)}</td>
         <td><input class="input" type="month" data-lm="${k}" value="${sh.month || thisMonth}" style="width:160px"></td>
@@ -332,7 +332,7 @@ export async function render(main, ctx) {
       const monthlyInFile = new Set(body.monthly.map((m) => `${m.year}-${String(m.month).replace(/\D/g, '').padStart(2, '0')}`));
       const latest = [...months].sort().pop();
       let recvFromCompany = null;
-      const costMonths = [];
+      const recvMonths = [];
       for (const sh of ledgerSheets) {
         const out = await api('/api/mgmt/company/import', { method: 'POST', body: {
           month: sh.month, entries: sh.entries, sections: sh.found,
@@ -341,20 +341,20 @@ export async function render(main, ctx) {
           applyReceivables: !fullBackup && !backupRange && !body.receivables.length && sh.month === latest,
         } });
         if (out.receivables !== null) recvFromCompany = out.receivables;
-        if (out.monthly) costMonths.push(sh.month);
+        if (out.monthly) recvMonths.push(sh.month);
       }
       const recvCount = recvFromCompany !== null ? `${recvFromCompany}건 (미수금 현황 ${latest} 기준)` : `${r.counts.receivables}건`;
       const companyNote = !ledgerSheets.length ? ''
-        : costMonths.length ? ` + 경영지원 관리 지출 반영 ${costMonths.length}개월(${costMonths.join(', ')})`
+        : recvMonths.length ? ` + 미수금 총액 반영 ${recvMonths.length}개월(${recvMonths.join(', ')})`
           : recvFromCompany === null && !body.monthly.length ? ' · 경영지원 관리 시트에 반영할 내용(거래처·금액)이 없었습니다' : '';
       const note = `연간목표 ${r.counts.targets}건, 월별실적 ${r.counts.monthly}건${companyNote}, 매출내역 ${r.counts.sales}건, 미수금 ${recvCount}`;
       // 이력에는 0건인 항목을 빼고 짧게
       const logNote = [['연간목표', r.counts.targets], ['월별실적', r.counts.monthly], ['매출내역', r.counts.sales]].filter(([, n]) => n).map(([l, n]) => `${l} ${n}건`)
-        .concat(recvFromCompany !== null || r.counts.receivables ? [`미수금 ${recvCount}`] : [], costMonths.length ? [`지출 반영 ${costMonths.length}개월`] : []).join(', ') || '반영할 내용 없음';
+        .concat(recvFromCompany !== null || r.counts.receivables ? [`미수금 ${recvCount}`] : [], recvMonths.length ? [`미수금 총액 ${recvMonths.length}개월`] : []).join(', ') || '반영할 내용 없음';
       result.innerHTML = `<div class="notice">저장 완료 — ${note}. <a href="#/dashboard">대시보드에서 확인 →</a></div>`;
       main.querySelector('#u-state').textContent = '경영 데이터 엑셀 · 저장 완료';
       // 업로드 이력에 남김 (실패해도 저장은 끝났으므로 안내만)
-      const savedCount = r.counts.targets + r.counts.monthly + r.counts.sales + (recvFromCompany ?? r.counts.receivables) + costMonths.length;
+      const savedCount = r.counts.targets + r.counts.monthly + r.counts.sales + (recvFromCompany ?? r.counts.receivables) + recvMonths.length;
       const rowCount = parsed.reduce((a, p) => a + (p.type ? p.rows.length : 0), 0) + ledgerSheets.reduce((a, sh) => a + sh.entries.length, 0);
       api('/api/mgmt/upload-log', { method: 'POST', body: { file_name: fileNames.join(', '), row_count: rowCount, saved_count: savedCount, note: logNote } })
         .catch(() => toast('저장은 됐지만 업로드 이력을 남기지 못했습니다.', true));

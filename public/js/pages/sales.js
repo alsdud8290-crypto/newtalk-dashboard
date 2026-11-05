@@ -6,7 +6,7 @@ import { datasetSheet, downloadCsv, downloadCompany, fileSafe, stamp, periodDown
 const CSV_COLS = { ext_id: 'id', work_type: '작업구분', biz_type: '사업구분', export_type: '수출구분', order_no: '판매번호',
   end_client: '최종발주처epc', project: '사업명', customer: '판매처', amount: '매출액' };
 const WORK_TO_TYPE = [[/부품|교체/, '상품'], [/점검|수리|공사|용역/, '용역']]; // 그 외(제품·기타) → 제품
-const BIZ_TO_INDUSTRY = [[/상하수도|수도/, '상하수도'], [/발전/, '발전소'], [/가스/, '가스'], [/오일/, '오일'], [/석유|정유/, '석유'], [/플랜트/, '민간 플랜트']];
+const BIZ_TO_INDUSTRY = [[/상하수도|수도/, '상하수도'], [/발전/, '발전소'], [/가스|오일|석유|정유/, '가스·오일·석유화학'], [/플랜트/, '민간 플랜트']];
 const hnorm = (h) => String(h).replace(/[\s*/_·.\-]/g, '').toLowerCase();
 
 function parseCsv(text) {
@@ -193,7 +193,7 @@ export async function render(main, ctx) {
         <ul class="hint tips">
           <li>기준월은 파일 이름(_202601)에서 읽습니다. 매출 일자는 그 달 1일로 저장됩니다.</li>
           <li>작업 구분 → 매출 구분: 제품 → 제품, 부품 및 교체 → 상품, 점검/수리/공사/용역 → 용역 (작업 구분은 제품 시리즈 칸에 남깁니다)</li>
-          <li>사업 구분 → 산업 분야: 상하수도(지자체·밸브사) → 상하수도, 발전 → 발전소, 가스·오일·석유화학 → 가스</li>
+          <li>사업 구분 → 산업 분야: 상하수도(지자체·밸브사) → 상하수도, 발전 → 발전소, 가스·오일·석유화학·민간 플랜트·기타는 그대로</li>
         </ul>
       </div>`;
     const drop = box.querySelector('#csv-drop');

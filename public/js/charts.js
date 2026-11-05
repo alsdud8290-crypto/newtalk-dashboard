@@ -8,8 +8,7 @@ export const REMAIN = '#ece8e1';
 export const INK = { primary: '#1d2433', secondary: '#565d6b', muted: '#979ba4', grid: '#efebe5' };
 
 export const INDUSTRY_COLORS = {
-  상하수도: SERIES[0], 발전소: SERIES[1], 가스: SERIES[2], 오일: SERIES[3],
-  석유: SERIES[4], '민간 플랜트': SERIES[5], 기타: OTHER,
+  상하수도: SERIES[0], 발전소: SERIES[1], '가스·오일·석유화학': SERIES[2], '민간 플랜트': SERIES[5], 기타: OTHER,
 };
 
 // 제품 시리즈: 처음 본 순서대로 슬롯 배정 후 브라우저에 기억 → 기간을 바꿔도 같은 시리즈는 같은 색

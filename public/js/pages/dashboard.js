@@ -9,14 +9,15 @@ let currentAi = null;
 
 const MODES = [['month', '월'], ['quarter', '분기'], ['year', '연간'], ['range', '기간']];
 const SALES_COLORS = { 제품매출: SERIES[0], 상품매출: SERIES[1], 용역매출: SERIES[2], 영업외수익: SERIES[3] };
-const COST_COLORS = { '상품 매입': SERIES[0], 판관비: SERIES[1], 영업외비용: SERIES[2], '원재료 매입': SERIES[3], 노무비: SERIES[4], 경비: SERIES[5] };
+const COST_COLORS = { 상품: SERIES[0], 원재료: SERIES[1], 경비: SERIES[2], 기타: SERIES[3] };
 const salesMixOf = (c) => [
   { label: '제품매출', value: c.sales.product }, { label: '상품매출', value: c.sales.goods },
   { label: '용역매출', value: c.sales.service }, { label: '영업외수익', value: c.sales.nonOp },
 ];
+// 지출 구성: 상품(상품 매입) · 원재료(원재료 매입) · 경비(제조 경비) · 기타(판관비 + 노무비 + 영업외비용)
 const costMixOf = (c) => [
-  { label: '상품 매입', value: c.costs.productPurchase }, { label: '판관비', value: c.costs.sga }, { label: '영업외비용', value: c.costs.nonOp },
-  { label: '원재료 매입', value: c.costs.materialPurchase }, { label: '노무비', value: c.costs.labor }, { label: '경비', value: c.costs.expense },
+  { label: '상품', value: c.costs.productPurchase }, { label: '원재료', value: c.costs.materialPurchase },
+  { label: '경비', value: c.costs.expense }, { label: '기타', value: c.costs.sga + c.costs.labor + c.costs.nonOp },
 ];
 const nextLabel = { month: '다음 달', quarter: '다음 분기', year: '내년', range: '다음 기간' };
 const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
@@ -231,7 +232,7 @@ async function load(main) {
         </div>
       </div>
       ${donutCard('c-sales-mix', '매출 구성', '제품 · 상품 · 용역 · 영업외수익', won(cur.sales.total), s.short)}
-      ${donutCard('c-cost-mix', '지출 구성', '상품 매입 · 판관비 · 영업외비용 · 원재료 · 노무비 · 경비', won(cur.costs.total), s.short)}
+      ${donutCard('c-cost-mix', '지출 구성', '상품 · 원재료 · 경비 · 기타(판관비·노무비·영업외비용)', won(cur.costs.total), s.short)}
     </div>
 
     <div class="section-title"><span class="num-badge">03</span>추이 및 분석</div>
