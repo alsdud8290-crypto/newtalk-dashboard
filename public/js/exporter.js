@@ -113,8 +113,10 @@ export function saveBlob(filename, blob) {
 //  2쪽이면 화면의 큰 덩어리(카드 줄) 경계 중 가운데에 가장 가까운 곳에서 나눈다. PDF는 직접 만든다 (쪽마다 JPEG 한 장)
 // paged: 쪽 수 제한 없이 A4 가로 너비에 맞춰 여러 쪽으로 (카드 사이에서만 나눔, 한 쪽보다 큰 카드는 그 쪽만 줄여 통째로)
 // expandTables: 찍는 동안 스크롤로 잘린 표(.table-wrap 높이 제한)를 끝까지 펼침
-// (두 옵션 모두 생산팀 대시보드용. 주지 않으면 예전과 같이 maxPages 쪽 안에 맞춤)
-export async function downloadPdf(el, filename, { maxPages = 1, paged = false, expandTables = false } = {}) {
+//   펼친 표는 줄 사이에서도 쪽을 나눌 수 있다
+// autoPage: maxPages 안에 넣으면 글자가 너무 작아질 만큼 길면(펼친 긴 표 등) paged 로 바꿈 (카드별 PDF)
+// (주지 않으면 예전과 같이 maxPages 쪽 안에 맞춤)
+export async function downloadPdf(el, filename, { maxPages = 1, paged = false, expandTables = false, autoPage = false } = {}) {
   if (!window.html2canvas) return toast('PDF 저장 기능을 불러오지 못했습니다.', true);
   try {
     const scale = 2;
@@ -131,6 +133,10 @@ export async function downloadPdf(el, filename, { maxPages = 1, paged = false, e
       const boxes = [...el.querySelectorAll('.card, .notice, .section-title')].map((n) => n.getBoundingClientRect());
       cuts = boxes.map((r) => r.bottom).filter((y) => !boxes.some((r) => r.top < y - 1 && r.bottom > y + 1))
         .map((y) => Math.round((y - top) * scale));
+      if (expandTables) {
+        el.querySelectorAll('.table-wrap tbody tr').forEach((tr) => cuts.push(Math.round((tr.getBoundingClientRect().bottom - top) * scale)));
+        cuts.sort((a, b) => a - b);
+      }
       canvas = await html2canvas(el, {
         backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
         scale, ignoreElements: (node) => node.hasAttribute?.('data-no-export'), logging: false,
@@ -140,6 +146,12 @@ export async function downloadPdf(el, filename, { maxPages = 1, paged = false, e
     const H = canvas.height;
     cuts = cuts.filter((v) => v > 0 && v < H);
     const margin = 24;
+    // 세로 A4 너비에 맞춘 배율보다 30% 넘게 줄어야 maxPages 에 들어가면 여러 쪽으로
+    if (autoPage && !paged) {
+      const fitW = (595 - margin * 2) / W;
+      const fitH = (842 - margin * 2) / (H / Math.max(1, maxPages));
+      if (Math.max(Math.min(fitW, fitH), Math.min((842 - margin * 2) / W, (595 - margin * 2) / (H / Math.max(1, maxPages)))) < fitW * 0.7) paged = true;
+    }
     if (paged) {
       const [pw, ph] = [842, 595];
       const fit = (pw - margin * 2) / W;
@@ -403,7 +415,7 @@ export function bindCardMenus(root, opts) {
     const name = fileSafe(`${prefix}_${data.name}_${label()}_${stamp()}`);
     if (btn.dataset.export === 'csv') return downloadCsv(name, data);
     btn.disabled = true;
-    await downloadPdf(card, name);
+    await downloadPdf(card, name, { expandTables: true, autoPage: true });
     btn.disabled = false;
   });
 }
