@@ -33,8 +33,8 @@ export async function render(main, ctx) {
     </div>`;
   main.querySelector('#pd-pdf').addEventListener('click', async (e) => {
     e.target.disabled = true;
-    // 다른 대시보드와 같이 화면 그대로 A4 1~2쪽 (긴 표 전체는 카드별 ⬇ → PDF)
-    await downloadPdf(main.querySelector('#pd-export'), fileSafe(`생산팀_대시보드_${data?.period.label || ''}_${stamp()}`), { maxPages: 2 });
+    // 다른 대시보드와 같이 A4 1~2쪽. 스크롤로 잘린 표(납기 임박)는 끝까지 펼치고, 그래서 글자가 너무 작아지면 여러 쪽으로
+    await downloadPdf(main.querySelector('#pd-export'), fileSafe(`생산팀_대시보드_${data?.period.label || ''}_${stamp()}`), { maxPages: 2, expandTables: true, autoPage: true });
     e.target.disabled = false;
   });
 
