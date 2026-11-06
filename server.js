@@ -334,7 +334,7 @@ mgmt.post('/sales/upsert', wrap(async (req, res) => {
     try {
       const key = str(r.ext_id) || (str(r.order_no) ? `SO:${str(r.order_no)}` : '');
       if (!key) throw new HttpError(400, 'ID와 판매번호가 모두 비어 있습니다.');
-      return [...cleanSale(r), key, str(r.order_no), str(r.work_type), str(r.biz_type), str(r.export_type), str(r.end_client), str(r.project)];
+      return [...cleanSale(r), key, str(r.order_no), str(r.work_type), str(r.biz_type), str(r.export_type), str(r.end_client), str(r.project), str(r.brand)];
     } catch (e) { errors.push(`${str(r.file)} ${i + 1}번째 행: ${e.message}`); return null; }
   });
   if (errors.length) return res.status(400).json({ error: '매출자료에 오류가 있어 저장하지 않았습니다.', details: errors.slice(0, 50), total: errors.length });
@@ -354,8 +354,8 @@ mgmt.post('/sales/upsert', wrap(async (req, res) => {
     const nt = /^NT-(\d+)$/.exec(r[7]);
     if (nt) stmts.push(["DELETE FROM sales WHERE id = ? AND ext_id = ''", [Number(nt[1])]]);
     stmts.push(['DELETE FROM sales WHERE ext_id = ?', [r[7]]]);
-    stmts.push([`INSERT INTO sales (date, customer, industry, series, sales_type, amount, note, ext_id, order_no, work_type, biz_type, export_type, end_client, project)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r]);
+    stmts.push([`INSERT INTO sales (date, customer, industry, series, sales_type, amount, note, ext_id, order_no, work_type, biz_type, export_type, end_client, project, brand)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r]);
   }
   await db.batch(stmts);
   const updated = keys.filter((k) => existing.has(k)).length;
@@ -539,7 +539,7 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
     (ws) => stmt.writeStatementSheet(ws, k, m, by[m] || null, lb[`${m}|${k}`])]));
   const salesSheets = (months, by) => months.filter((m) => by[m]?.length || months.length === 1).map((m) => {
     const aoa = stmt.salesFileAoa(by[m] || []);
-    return [stmt.salesSheetName(m), aoa, (ws) => stmt.writeAoaTable(ws, aoa, [14, 14, 18, 9, 15, 26, 40, 26, 15], [9])];
+    return [stmt.salesSheetName(m), aoa, (ws) => stmt.writeAoaTable(ws, aoa, [14, 12, 14, 18, 9, 15, 26, 40, 26, 15], [10])];
   });
   const targetSheet = (rows) => {
     const aoa = [['연도', '목표매출액'], ...rows.map((r) => [r.year, r.revenue ?? ''])];
@@ -568,7 +568,7 @@ mgmt.get('/xlsx', wrap(async (req, res) => {
   if (kind === 'sales') {
     const by = await salesBy();
     const sheets = salesSheets(sc ? (await monthsOf()).filter((m) => by[m]?.length) : Object.keys(by).sort(), by);
-    if (!sheets.length) sheets.push([stmt.salesSheetName(sc ? sc.to : thisMonth), [stmt.SALES_FILE_HEAD], (ws) => stmt.writeAoaTable(ws, [stmt.SALES_FILE_HEAD], [14, 14, 18, 9, 15, 26, 40, 26, 15])]);
+    if (!sheets.length) sheets.push([stmt.salesSheetName(sc ? sc.to : thisMonth), [stmt.SALES_FILE_HEAD], (ws) => stmt.writeAoaTable(ws, [stmt.SALES_FILE_HEAD], [14, 12, 14, 18, 9, 15, 26, 40, 26, 15])]);
     return csv ? sendCsv(`매출자료_${scopeName}`, sheets) : sendSheets(`매출자료_${scopeName}`, sheets);
   }
   let spec;

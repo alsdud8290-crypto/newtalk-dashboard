@@ -121,7 +121,7 @@ export async function render(main, ctx) {
           <div class="hint">올리면 바로 저장되지 않고 확인 화면이 나옵니다 · 같은 ID의 매출을 다시 올리면 새 값으로 덮어씁니다</div></label>
         <ul class="hint tips">
           <li>기준월은 파일 이름(_202601)에서 읽습니다. 매출 일자는 그 달 1일로 저장됩니다.</li>
-          <li>작업 구분 → 매출 구분: 제품 → 제품, 부품 및 교체 → 상품, 점검/수리/공사/용역 → 용역 (작업 구분은 제품 시리즈 칸에 남깁니다)</li>
+          <li>매출 구분: 작업 구분이 점검/수리/공사/용역이면 용역, 그 외에는 브랜드 구분이 NEWTORK면 제품, 아니면 상품 (브랜드 구분 열이 없는 예전 파일은 부품 및 교체 → 상품, 그 외 → 제품). 작업 구분은 제품 시리즈 칸에 남깁니다</li>
           <li>사업 구분 → 산업 분야: 상하수도(지자체·밸브사) → 상하수도, 발전 → 발전소, 가스·오일·석유화학·민간 플랜트·기타는 그대로</li>
         </ul>
       </div>`;
@@ -155,9 +155,9 @@ export async function render(main, ctx) {
             <td class="wrap">${f.warnings.length ? `<span class="muted">${f.warnings.map(esc).join('<br>')}</span>` : '-'}</td></tr>`).join('')}</tbody>
         </table></div>
         <div class="table-wrap" style="max-height:50vh"><table class="tbl">
-          <thead><tr><th>기준월</th><th>판매번호</th><th>판매처</th><th>사업명</th><th>작업 구분 → 매출 구분</th><th>사업 구분 → 산업 분야</th><th class="r">매출액</th></tr></thead>
+          <thead><tr><th>기준월</th><th>판매번호</th><th>판매처</th><th>사업명</th><th>작업 구분 · 브랜드 → 매출 구분</th><th>사업 구분 → 산업 분야</th><th class="r">매출액</th></tr></thead>
           <tbody>${all.map((r) => `<tr><td>${esc(r.month || '-')}</td><td>${esc(r.order_no)}</td><td>${esc(r.customer)}</td><td class="wrap" style="min-width:240px">${esc(r.project)}</td>
-            <td>${esc(r.work_type)} → <b>${r.sales_type}</b></td><td>${esc(r.biz_type)} → <b>${r.industry}</b></td><td class="r num">${comma(r.amount)}</td></tr>`).join('')}</tbody>
+            <td>${esc(r.work_type)}${r.brand ? ` · ${esc(r.brand.trim())}` : ''} → <b>${r.sales_type}</b></td><td>${esc(r.biz_type)} → <b>${r.industry}</b></td><td class="r num">${comma(r.amount)}</td></tr>`).join('')}</tbody>
         </table></div>
       </div>`;
     box.querySelectorAll('[data-cm]').forEach((el) => el.addEventListener('change', () => { files[Number(el.dataset.cm)].month = el.value; drawPreview(); }));

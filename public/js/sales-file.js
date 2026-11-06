@@ -1,8 +1,16 @@
 // 매출자료 (판매 관리 프로그램에서 받은 월별 파일, 예: 매출자료_202601.csv) 읽기 — 매출 내역 화면·경영 데이터 업로드가 같이 씀
-// 열: *ID, 작업 구분, 사업 구분, 수출 구분, 판매번호, 최종발주처 / EPC, 사업명, 판매처, 매출액. 날짜 열이 없어 기준월은 파일·시트 이름에서 읽는다.
-const CSV_COLS = { ext_id: 'id', work_type: '작업구분', biz_type: '사업구분', export_type: '수출구분', order_no: '판매번호',
+// 열: *ID, 브랜드 구분, 작업 구분, 사업 구분, 수출 구분, 판매번호, 최종발주처 / EPC, 사업명, 판매처, 매출액. 날짜 열이 없어 기준월은 파일·시트 이름에서 읽는다.
+const CSV_COLS = { ext_id: 'id', brand: '브랜드구분', work_type: '작업구분', biz_type: '사업구분', export_type: '수출구분', order_no: '판매번호',
   end_client: '최종발주처epc', project: '사업명', customer: '판매처', amount: '매출액' };
-const WORK_TO_TYPE = [[/부품|교체/, '상품'], [/점검|수리|공사|용역/, '용역']]; // 그 외(제품·기타) → 제품
+// 매출 구분 (경영지원 담당자 기준): 작업 구분이 점검/수리/공사/용역 → 용역,
+//  그 외에는 브랜드 구분이 NEWTORK → 제품, NEWTORK가 아니면 → 상품
+//  브랜드 구분 열이 없는 예전 파일은 작업 구분만으로: 부품 및 교체 → 상품, 그 외 → 제품
+const SERVICE_WORK = /점검|검사|수리|공사|용역/;
+export function salesTypeOf(workType, brand, hasBrand = true) {
+  if (SERVICE_WORK.test(workType)) return '용역';
+  if (!hasBrand) return /부품|교체/.test(workType) ? '상품' : '제품';
+  return String(brand).trim().toUpperCase() === 'NEWTORK' ? '제품' : '상품';
+}
 const BIZ_TO_INDUSTRY = [[/상하수도|수도/, '상하수도'], [/발전/, '발전소'], [/가스|오일|석유|정유/, '가스·오일·석유화학'], [/플랜트/, '민간 플랜트']];
 const hnorm = (h) => String(h).replace(/[\s*/_·.\-]/g, '').toLowerCase();
 
@@ -50,7 +58,7 @@ export function parseSalesAoa(aoa, name) {
     const v = Object.fromEntries(Object.entries(idx).map(([k, i]) => [k, i < 0 ? '' : String(r[i] ?? '').trim()]));
     v.ext_id = v.ext_id.replace(/"/g, '').trim();
     v.amount = Math.round(Number(v.amount.replace(/,/g, '')) || 0);
-    v.sales_type = (WORK_TO_TYPE.find(([re]) => re.test(v.work_type)) || [, '제품'])[1];
+    v.sales_type = salesTypeOf(v.work_type, v.brand, idx.brand >= 0);
     v.industry = (BIZ_TO_INDUSTRY.find(([re]) => re.test(v.biz_type)) || [, '기타'])[1];
     v.series = v.work_type;
     if (!v.customer) { out.warnings.push(`판매처가 빈 행을 건너뜁니다 (판매번호 ${v.order_no || '-'})`); continue; }
