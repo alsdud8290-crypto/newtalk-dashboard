@@ -1,4 +1,4 @@
-// 생산팀 대시보드 (ITB2026에서 옮겨 옴): 납기 임박(오늘 기준) + 생산 실적(목표 대비·비교) + 납기·출고 + 판매 실적
+// 생산팀 대시보드 (ITB2026에서 옮겨 옴): 납기 임박(오늘 기준) + 생산 실적(목표 대비·비교) + 납기·출고 + 생산량 집계(제조년월 기준)
 import { api, esc, toast } from '../core.js';
 import { gauge, prodBars, donut, SERIES, OTHER, INDUSTRY_COLORS, ORDER_LINE, hideTooltip } from '../charts.js';
 import { periodDownloadButton, bindPeriodDownload, downloadFrom, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
@@ -22,7 +22,7 @@ export async function render(main, ctx) {
 
   main.innerHTML = `
     <div class="page-head">
-      <div><h2>생산팀 대시보드</h2><div class="sub">생산 실적(제조년월 기준) · 납기·출고 · 판매 실적(수주서 제품 수량)</div></div>
+      <div><h2>생산팀 대시보드</h2><div class="sub">생산 실적(제조년월 기준) · 납기·출고 · 생산량 집계(산업 분야·거래처·제품)</div></div>
       <div class="filters"><div id="pd-period"></div>
         <button type="button" class="btn" id="pd-pdf" title="대시보드 전체를 PDF로 저장">⬇ PDF로 저장</button>${periodDownloadButton('pd-dl')}</div>
     </div>
@@ -97,6 +97,7 @@ export async function render(main, ctx) {
     const ypRate = yp.annual_target ? Math.round(yp.cumulative / yp.annual_target * 1000) / 10 : 0;
     const dl = data.delivery;
     const un = data.unshipped;
+    const ar = data.as_rate;
     const maxBucket = Math.max(1, ...un.buckets.map((b) => b.count));
     const unitName = view.barUnit === 'month' ? '달' : '분기';
     const targetName = view.barUnit === 'month' ? '월 목표' : '분기 목표';
@@ -184,6 +185,17 @@ export async function render(main, ctx) {
             <td class="muted">${esc(r.manufactured_date)} 제조</td><td class="r">${r.days}일</td></tr>`).join('')}</tbody></table>
           <div class="kv-row small" style="margin-top:10px">${un.by_model.slice(0, 6).map((m) => `<span>${esc(m.name)} <b>${m.quantity}</b></span>`).join('')}</div>`}
         </div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px" data-card="asrate">
+        <div class="card-head"><div class="ttl"><h3>${esc(data.period.label)} 생산분 모델별 A/S 비율</h3><span class="hint">이 기간에 만든 제품 중 출장보고서에 "수리"로 나온 적이 있는 대수 · 일련번호로 연결</span></div></div>
+        ${!ar.produced ? '<div class="empty">이 기간 생산 기록이 없습니다.</div>' : `
+        <div class="kv-row" style="margin-bottom:12px"><span>A/S 비율 <b class="big">${ar.rate ?? 0}%</b></span><span>생산 ${qty(ar.produced)} 중 A/S ${qty(ar.as_units)}</span></div>
+        <table class="tbl rank static"><thead><tr><th>모델</th><th></th><th class="r">A/S / 생산</th><th class="r">비율</th></tr></thead><tbody>${ar.by_model.map((m) => `<tr>
+          <td class="nm">${esc(m.name)}</td><td class="bar"><span style="width:${m.rate ?? 0}%;background:${SERIES[1]}"></span></td>
+          <td class="r num"><b>${m.as_units}</b> / ${m.produced}대</td><td class="r ${m.rate ? '' : 'muted'}">${m.rate ?? 0}%</td></tr>`).join('')}</tbody></table>
+        <p class="hint" style="margin:10px 0 0">최근에 만든 제품일수록 아직 A/S를 받을 시간이 짧아 비율이 낮게 나옵니다. 연간이나 지난 기간으로 보면 비교하기 좋습니다.
+          출장보고서의 구 버전(A 번호)·번호 없는 제품은 연결할 수 없어 빠집니다.</p>`}
       </div>`;
 
     addCardMenus(main.querySelector('#pd-body'));
@@ -225,14 +237,16 @@ export async function render(main, ctx) {
     main.querySelector('#pd-body').addEventListener('click', (e) => { const a = e.target.closest('[data-serial]'); if (a) sessionStorage.setItem('serialQuery', a.dataset.serial); });
   }
 
-  // ---------- 판매 실적: 직원이 기준을 바꿔 보는 화면 ----------
+  // ---------- 생산량 집계 (제조년월 기준): 직원이 기준을 바꿔 보는 화면 ----------
   const OPTIONS = {
-    date_basis: ['기준 날짜', [['due', '납기일'], ['order', '수주일'], ['delivery', '납품일']]],
-    customer_basis: ['거래처', [['customer', '판매처'], ['final_orderer', '최종발주처']]],
-    product_group: ['제품 묶음', [['name', '품명 그대로'], ['model', '모델별'], ['size', '구경별'], ['type', '종류별']]],
+    customer_basis: ['거래처', [['customer', '거래처'], ['final_orderer', '최종발주처']]],
+    product_group: ['제품 묶음', [['model', '모델별'], ['type', '종류별'], ['size', '구경별']]],
     compare: ['비교', COMPARES],
   };
-  const settings = store('production.sales.settings', { date_basis: 'due', customer_basis: 'customer', product_group: 'name', compare: 'none' });
+  const settings = store('production.sales.settings', { customer_basis: 'customer', product_group: 'model', compare: 'none' });
+  // 예전 판매 실적 설정(기준 날짜·품명 그대로)이 남아 있으면 지금 선택지로 맞춤
+  delete settings.date_basis;
+  for (const [k, [, ch]] of Object.entries(OPTIONS)) if (!ch.some(([v]) => v === settings[k])) settings[k] = ch[0][0];
   const filters = { industry: '', customer: '', product: '' };
   const FILTER_NAMES = { industry: '산업 분야', customer: '거래처', product: '제품' };
   let salesSeq = 0;
@@ -267,22 +281,22 @@ export async function render(main, ctx) {
     if (el.__chart) { el.__chart.destroy(); el.__chart = null; }
     el.innerHTML = `
       <div class="card" data-card="sales">
-        <div class="card-head"><div class="ttl"><h3>${esc(d.period.label)} 판매 실적</h3><span class="hint">수주서 제품 수량 · 항목을 누르면 나머지 순위가 그 조건으로 좁혀집니다</span></div></div>
+        <div class="card-head"><div class="ttl"><h3>${esc(d.period.label)} 생산량 집계</h3><span class="hint">제조내역 대수 · 제조년월 기준 · 항목을 누르면 나머지 순위가 그 조건으로 좁혀집니다</span></div></div>
         <div class="filters" style="margin-bottom:12px">
           ${Object.entries(OPTIONS).map(([k, [l, ch]]) => `<label>${l} <select class="input" data-opt="${k}">${ch.map(([v, t]) => `<option value="${v}" ${settings[k] === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`).join('')}
         </div>
         ${active.length ? `<div class="notice" style="margin-bottom:12px">걸러 보는 중: ${active.map(([k, v]) => `<b>${FILTER_NAMES[k]} = ${esc(v)}</b> <button class="btn sm" data-clear="${k}">✕</button>`).join(' ')} <button class="btn sm" data-clear="all">모두 풀기</button></div>` : ''}
-        <div class="kv-row" style="margin-bottom:14px"><span>판매량 합계 <b class="big">${qty(s.total)}</b></span>
+        <div class="kv-row" style="margin-bottom:14px"><span>생산량 합계 <b class="big">${qty(s.total)}</b></span><span class="muted">수주서 연결 ${qty(s.linked)}</span>
           ${s.compare ? `<span>${esc(s.compare.label)} ${qty(s.compare.total)} 대비 <b>${signed(s.compare.change)}대</b></span>` : ''}
-          ${s.missing_date_orders ? `<span class="muted">고른 기준 날짜가 비어 있는 수주서 ${s.missing_date_orders}건은 빠짐</span>` : ''}</div>
+          ${s.missing_date_units ? `<span class="muted">제조일자가 빈 제조내역 ${s.missing_date_units}대는 빠짐</span>` : ''}</div>
         <div class="split3">
           <div><div class="sub-ttl">산업 분야</div>
             ${s.by_industry.length ? '<div class="donut-box small" style="margin:0 auto 10px"><canvas id="ps-ind"></canvas></div>' : ''}
             ${ranking('industry', s.by_industry, sum(s.by_industry), industryColor)}</div>
-          <div><div class="sub-ttl">거래처 (${settings.customer_basis === 'customer' ? '판매처' : '최종발주처'})</div>${ranking('customer', s.by_customer, sum(s.by_customer))}</div>
+          <div><div class="sub-ttl">거래처 (${settings.customer_basis === 'customer' ? '제조내역 거래처' : '최종발주처'})</div>${ranking('customer', s.by_customer, sum(s.by_customer))}</div>
           <div><div class="sub-ttl">제품 (${OPTIONS.product_group[1].find(([v]) => v === settings.product_group)[1]})</div>${ranking('product', s.by_product, sum(s.by_product))}</div>
         </div>
-        <p class="hint" style="margin:12px 0 0">거래처·제품은 개수가 정해져 있지 않아 원형 그래프 대신 순위 막대와 비중(%)으로 보여 줍니다. ▲▼는 비교 기간 대비 증감입니다.</p>
+        <p class="hint" style="margin:12px 0 0">산업 분야·종류·구경은 판매번호(#26001)로 이은 수주서(NTK-SO-26001)에서 가져옵니다 — 수주서가 없으면 "수주서 없음", 같은 모델이 종류·구경을 달리해 여러 개면 "판단 불가". 거래처·제품은 원형 그래프 대신 순위 막대와 비중(%), ▲▼는 비교 기간 대비 증감입니다.</p>
       </div>`;
     addCardMenus(el);
     if (s.by_industry.length) el.__chart = donut(el.querySelector('#ps-ind'), null, s.by_industry.map((r) => ({ label: r.name, value: r.quantity })), industryColor, { fmt: qty, onSelect: (v) => toggleFilter('industry', v) });
@@ -326,6 +340,11 @@ export async function render(main, ctx) {
         ...section(`${label} 모델별 생산`, ['모델', '생산량(대)', '비중(%)'], rankRows(data.by_model)),
       ] };
     }
+    if (key === 'asrate') {
+      const ar = data.as_rate;
+      return { name: '모델별AS비율', aoa: section(`${label} 생산분 모델별 A/S 비율 (생산 ${ar.produced}대 중 A/S ${ar.as_units}대, ${ar.rate ?? 0}%)`, ['모델', '생산(대)', 'A/S 받은 대수', 'A/S 비율(%)'],
+        ar.by_model.map((m) => [m.name, m.produced, m.as_units, m.rate ?? 0])) };
+    }
     if (key === 'delivery') {
       const dl = data.delivery;
       const head = ['이름', '준수율(%)', '기한 내 출고(대)', '늦게 출고(대)', '미출고·납기 지남(대)', '대상(대)'];
@@ -347,8 +366,8 @@ export async function render(main, ctx) {
     if (key === 'sales' && salesData) {
       const s = salesData.sales;
       const head = (n) => [n, '수량(대)', '비중(%)', ...(s.compare ? ['증감(대)'] : [])];
-      return { name: '판매실적', aoa: [
-        ...section(`${salesData.period.label} 판매 실적 (합계 ${s.total}대)`, head('산업 분야'), rankRows(s.by_industry)),
+      return { name: '생산량집계', aoa: [
+        ...section(`${salesData.period.label} 생산량 집계 (제조년월 기준, 합계 ${s.total}대, 수주서 연결 ${s.linked}대)`, head('산업 분야'), rankRows(s.by_industry)),
         ...section('거래처', head('거래처'), rankRows(s.by_customer)),
         ...section('제품', head('제품'), rankRows(s.by_product)),
       ] };
@@ -357,11 +376,11 @@ export async function render(main, ctx) {
   }
   bindCardMenus(main, { getData: cardData, prefix: '생산팀', label: () => data?.period.label || '' });
 
-  const dashUrl = (period) => `/api/production/dashboard/export?period=${period}&${new URLSearchParams({ date_basis: settings.date_basis, customer_basis: settings.customer_basis, product_group: settings.product_group })}`;
-  // 엑셀: 고른 기간의 생산 실적·납기·판매 실적(지금 고른 기준)·제조내역 (대시보드 전체 CSV 내려받기는 없앰 → [PDF로 저장])
+  const dashUrl = (period) => `/api/production/dashboard/export?period=${period}&${new URLSearchParams({ customer_basis: settings.customer_basis, product_group: settings.product_group })}`;
+  // 엑셀: 고른 기간의 생산 실적·납기·생산량 집계(지금 고른 기준)·제조내역 (대시보드 전체 CSV 내려받기는 없앰 → [PDF로 저장])
   bindPeriodDownload(main, 'pd-dl', {
     ...dlPeriod(), modes: ['year', 'quarter', 'month'], current: dlPeriod, currentYear: () => prodPeriod.year,
-    hint: '고른 기간의 생산 실적·납기 준수·판매 실적·제조내역을 엑셀 시트별로 담습니다. 미출고는 오늘 기준입니다. 화면 그대로는 [PDF로 저장]을 쓰세요.',
+    hint: '고른 기간의 생산 실적·납기 준수·생산량 집계·제조내역을 엑셀 시트별로 담습니다. 미출고는 오늘 기준입니다. 화면 그대로는 [PDF로 저장]을 쓰세요.',
     onExcel: (period) => downloadFrom(dashUrl(period)),
   });
   await periodSelector(main.querySelector('#pd-period'), load);

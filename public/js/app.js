@@ -36,7 +36,7 @@ const ROUTES = {
   '/production/uploads': { page: teamUpload.history, perm: 'production', edit: 'production', title: '업로드 이력', team: 'production' },
   '/service': { page: servicePage, perm: 'service', title: '서비스팀 대시보드' },
   '/service/reports': { page: servicePage.reports, perm: 'service', title: '출장보고서 목록' },
-  '/service/reports/new': { page: servicePage.reportForm, perm: 'service', edit: 'service', title: '출장보고서 입력' },
+  '/service/upload': { page: servicePage.dataUpload, perm: 'service', edit: 'service', title: '서비스 데이터 업로드' },
   '/prices/parts': { page: partPrices, perm: PART_PERMS, title: '부품별 단가 비교', tab: 'parts' },
   '/prices/companies': { page: partPrices, perm: PART_PERMS, title: '출장지별 단가 비교', tab: 'companies' },
   '/prices/upload': { page: partPrices, perm: PART_PERMS, edit: 'service', title: '부품 단가 데이터 업로드', tab: 'upload' },
@@ -76,7 +76,7 @@ const MENU = [
   { type: 'group', label: '서비스', icon: 'service', perm: 'service', items: [
     ['/service', '서비스 대시보드'],
     ['/service/reports', '출장보고서 목록'],
-    ['/service/reports/new', '출장보고서 입력'],
+    ['/service/upload', '서비스 데이터 업로드'],
     ['/service/uploads', '업로드 이력'],
   ] },
   // 하위 항목 세 번째 값: 그 항목만의 권한 (없으면 묶음 권한)
@@ -221,7 +221,7 @@ function changePassword(forced) {
 }
 
 // 없앤 화면의 옛 주소(즐겨찾기 등) → 옮겨 간 화면
-const MOVED = { '/service/upload': '/service/reports/new', '/input/receivables': '/input/monthly', '/export': '/upload' };
+const MOVED = { '/service/reports/new': '/service/upload', '/input/receivables': '/input/monthly', '/export': '/upload' };
 
 async function route() {
   if (!state.user) return;
@@ -247,7 +247,7 @@ async function route() {
   }
   main.innerHTML = '<div class="empty">불러오는 중…</div>';
   try {
-    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, kind: r.kind, canEdit, reloadMeta });
+    state.cleanup = await r.page.render(main, { user: state.user, meta: state.meta, team: r.team, tab: r.tab, kind: r.kind, canEdit, can, reloadMeta });
     const tabs = pageTabs(target);
     const head = main.querySelector(':scope > .page-head');
     if (tabs) (head ? head.insertAdjacentHTML('afterend', tabs) : main.insertAdjacentHTML('afterbegin', tabs));

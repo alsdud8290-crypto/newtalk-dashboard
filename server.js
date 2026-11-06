@@ -18,6 +18,7 @@ import * as service from './lib/service.js';
 import './lib/pdf-uploads.js'; // 수주서·출장보고서 PDF 업로드 규칙 등록
 import './lib/order-uploads.js'; // 생산 데이터 업로드: 수주내역 엑셀 시트 규칙 등록
 import './lib/part-uploads.js'; // 부품 단가 데이터(CSV)·신규 부품(엑셀) 업로드 규칙 등록
+import './lib/service-csv.js'; // 서비스 데이터(출장보고서) CSV 업로드 규칙 등록
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -772,7 +773,7 @@ prod.get('/orders/export', wrap(async (req, res) => {
   const { label, rows } = await production.orderExportRows(req.query);
   await sheetsSend(req, res, `수주내역_${label}`, [['수주내역', production.ORDER_COLUMNS.map(([h, k, w]) => [h, k, w, k === 'item.quantity' ? 'won' : undefined]), rows]]);
 }));
-// 대시보드 엑셀(또는 ?format=csv → 시트별 CSV ZIP): ?period=2026 | 2026-Q3 | 2026-09 (+ 판매 실적 기준 date_basis·customer_basis·product_group)
+// 대시보드 엑셀(또는 ?format=csv → 시트별 CSV ZIP): ?period=2026 | 2026-Q3 | 2026-09 (+ 생산량 집계 기준 customer_basis·product_group)
 const dashExport = (mod, prefix) => wrap(async (req, res) => {
   const { label, sheets } = await mod.dashboardSheets({ ...req.query, ...production.periodQuery(req.query.period) });
   await sheetsSend(req, res, `${prefix}_${label.replace(/\s+/g, '')}_${nowStr().slice(0, 10)}`, sheets);
@@ -782,14 +783,13 @@ prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await pro
 app.use('/api/production', prod);
 
 // ---------- 서비스팀 (ITB2026에서 옮겨 옴) ----------
-// 조회는 서비스팀 열람 권한, 보고서 직접 입력은 서비스팀 수정 권한
+// 조회는 서비스팀 열람 권한. 보고서 입력은 서비스 데이터 CSV 업로드(/api/uploads, 서비스팀 수정 권한)
 const svc = express.Router();
 svc.use(requirePerm('service'));
 svc.use(requireEditFor('service'));
 svc.get('/dashboard', wrap(async (req, res) => res.json(await service.dashboard(req.query))));
 svc.get('/dashboard/export', dashExport(service, '서비스팀대시보드'));
 svc.get('/reports', wrap(async (req, res) => res.json(await service.reportList(req.query))));
-svc.post('/reports', wrap(async (req, res) => res.status(201).json(await service.createReport(req.body || {}, req.user.id))));
 svc.get('/reports/:id', wrap(async (req, res) => res.json(await service.reportDetail(req.params.id))));
 svc.get('/form-choices', wrap(async (_req, res) => res.json(await service.formChoices())));
 app.use('/api/service', svc);
@@ -814,12 +814,18 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, () => console.log(`뉴토크 코리아 경영 대시보드: http://localhost:${PORT}`));
-// 처음 실행(표가 비어 있을 때)만 가상 데이터를 넣는다. 원격 DB(Turso)에서는 시간이 걸리므로 서버를 먼저 켜고 뒤에서 넣는다
+// 처음 실행 때 한 번만 가상 데이터를 넣는다 (app_flags.virtual_seeded). 데이터를 지운 뒤 다시 켜도 가상 데이터는 돌아오지 않음
+//  원격 DB(Turso)에서는 시간이 걸리므로 서버를 먼저 켜고 뒤에서 넣는다
 (async () => {
   try {
-    await pricing.seedVirtualPricing();
-    await production.seedVirtualProduction();
-    await service.seedVirtualService();
+    if (!(await db.get("SELECT 1 FROM app_flags WHERE key = 'virtual_seeded'"))) {
+      // 예전 버전에서 이미 데이터가 들어간 DB는 가상 데이터를 더 넣지 않고 표시만 남김 (각 seed 함수가 표가 비어 있을 때만 넣음)
+      await pricing.seedVirtualPricing();
+      await production.seedVirtualProduction();
+      await service.seedVirtualService();
+      await db.run("INSERT OR IGNORE INTO app_flags (key, value) VALUES ('virtual_seeded', ?)", nowStr());
+    }
+    await service.backfillSerialKeys(); // 출장보고서 일련번호 → 제조내역 비교용 번호
   } catch (e) {
     console.error('[seed] 가상 데이터 넣기 실패', e);
   }

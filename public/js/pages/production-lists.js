@@ -4,7 +4,7 @@
 //  엑셀: 지금 걸러 놓은 조건 그대로 전체를 .xlsx로
 import { api, esc } from '../core.js';
 import { downloadFrom, periodDownloadButton, bindPeriodDownload } from '../exporter.js';
-import { periodQS, pickQS, periodSelector, dlPeriod, qty, dash } from './prod-common.js';
+import { periodQS, pickQS, periodSelector, dlPeriod, qty, dash, openTripReport } from './prod-common.js';
 
 function pager(d) {
   const pages = Math.max(1, Math.ceil(d.total / d.page_size));
@@ -84,7 +84,7 @@ export const orders = {
     let open = '';
     main.innerHTML = `
       <div class="page-head">
-        <div><h2>수주 내역</h2><div class="sub">납기일 기준 (대시보드 판매량과 같음) · 줄을 누르면 제품 정보 전체</div></div>
+        <div><h2>수주 내역</h2><div class="sub">납기일 기준 (납기일이 없으면 수주일) · 줄을 누르면 제품 정보 전체</div></div>
         <div id="ol-period"></div>
       </div>
       <div class="card">
@@ -113,7 +113,7 @@ export const orders = {
         <div class="table-wrap"><table class="tbl click">
           <thead><tr><th>납기일</th><th>판매번호</th><th>수주서류</th><th>수주일</th><th>산업 분야</th><th>판매처</th><th>사업명</th><th>제품 × 수량</th><th class="r">수량</th></tr></thead>
           <tbody>${d.results.map((o) => `<tr data-o="${esc(o.sales_no)}" class="${open === o.sales_no ? 'sel' : ''}">
-            <td>${dash(o.due_date)}</td><td><b>${esc(o.sales_no)}</b></td><td>${o.order_doc_no ? `#${esc(o.order_doc_no)}` : '-'}</td><td>${dash(o.order_date)}</td>
+            <td>${o.due_date ? esc(o.due_date) : '<span class="muted" title="납기일이 없어 수주일 기준으로 이 기간에 넣었습니다">미정</span>'}</td><td><b>${esc(o.sales_no)}</b></td><td>${o.order_doc_no ? `#${esc(o.order_doc_no)}` : '-'}</td><td>${dash(o.order_date)}</td>
             <td>${esc(o.industry)}</td><td>${dash(o.customer)}</td><td>${dash(o.project_name)}</td>
             <td class="wrap">${o.items.map((i) => `${esc(i.product_name)} × ${i.quantity}`).join('<br>')}</td><td class="r num"><b>${qty(o.quantity)}</b></td></tr>
             ${open === o.sales_no ? `<tr class="detail-row"><td colspan="9">
@@ -144,9 +144,9 @@ export const orders = {
 };
 
 // ---------------- 일련번호 조회 ----------------
-// 4자리(예: 0001, 1) 또는 전체 번호(예: N82260001)로 검색 → 여러 건이면 목록에서 고름 → 11개 항목
+// 4자리(예: 0001, 1) 또는 전체 번호(예: N82260001)로 검색 → 여러 건이면 목록에서 고름 → 12개 항목(A/S 이력 포함)
 export const serials = {
-  async render(main) {
+  async render(main, ctx) {
     main.innerHTML = `
       <div class="page-head"><div><h2>일련번호 조회</h2><div class="sub">4자리(예: 0001) 또는 전체 번호(예: N82260001)로 찾습니다. 여러 건이 나오면 목록에서 고르세요.</div></div></div>
       <div class="card" style="margin-bottom:16px;max-width:900px">
@@ -170,12 +170,25 @@ export const serials = {
       const val = (v) => (v && typeof v === 'object'
         ? `<div class="kv-row">${Object.entries(v).map(([k, x]) => `<span>${esc(k)} <b>${x ? esc(x) : '<span class="muted">-</span>'}</b>${k === 'Flange' && !x ? ' <span class="muted">(수주서에서 보완)</span>' : ''}</span>`).join('')}</div>`
         : (v ? esc(v) : '<span class="muted">-</span>'));
+      const sv = d.service;
+      const canService = ctx.can('service');
+      const history = !sv.items.length ? '<span class="muted">출장보고서에 이 일련번호가 나온 적이 없습니다.</span>' : `
+        <div class="kv-row" style="margin-bottom:8px"><span>A/S(수리) <b>${sv.repairs}회</b></span><span>출장 전체 <b>${sv.trips}회</b></span>
+          <span>마지막 출장 <b>${esc(sv.last)}</b></span>${sv.last_repair_elapsed ? `<span>마지막 A/S 때 ${esc(sv.base_label)} 후 <b>${esc(sv.last_repair_elapsed)}</b></span>` : ''}</div>
+        <div class="table-wrap"><table class="tbl ${canService ? 'click' : ''}" id="sr-trips"><thead><tr><th>출장일</th><th>요청처</th><th>작업 구분</th><th>비용</th><th>${esc(sv.base_label)} 후</th><th>교체 부품</th><th>고장 내용</th></tr></thead>
+          <tbody>${sv.items.map((t) => `<tr data-trip="${t.id}" data-date="${esc(t.start_date)}">
+            <td>${esc(t.start_date)}</td><td>${esc(t.requester)}</td><td>${t.repair ? '' : '<span class="badge" title="수리가 아닌 출장은 A/S 횟수에서 뺍니다">수리 아님</span> '}${dash(t.work_type)}</td>
+            <td>${esc(t.paid_type)}</td><td>${dash(t.elapsed)}</td><td>${dash(t.parts.join(', '))}</td><td class="wrap">${dash(t.fault)}</td></tr>`).join('')}</tbody></table></div>
+        ${canService ? '<p class="hint" style="margin:6px 0 0">줄을 누르면 출장보고서 상세로 이동합니다.</p>' : ''}`;
       $('#sr-detail').innerHTML = `
-        <div class="card" style="max-width:900px">
-          <div class="card-head"><div class="ttl"><h3>${esc(d.serial_full)}</h3><span class="hint">조회 항목 11개</span></div></div>
-          <table class="tbl detail-tbl"><tbody>${d.items.map((i) => `<tr><th><span class="no">${i.no}</span>${esc(i.label)}</th><td>${val(i.value)}</td></tr>`).join('')}</tbody></table>
-          <p class="hint" style="margin:10px 0 0">Flange는 제조내역 엑셀에 없어 수주서에서 보완합니다 (임시: 수주서류 번호 = PO번호로 연결, 기업 확인 필요).</p>
+        <div class="card" style="max-width:1100px">
+          <div class="card-head"><div class="ttl"><h3>${esc(d.serial_full)}</h3><span class="hint">조회 항목 12개</span></div></div>
+          <table class="tbl detail-tbl"><tbody>${d.items.map((i) => `<tr><th><span class="no">${i.no}</span>${esc(i.label)}</th><td>${val(i.value)}</td></tr>`).join('')}
+            <tr><th><span class="no">12</span>A/S 이력</th><td>${history}</td></tr></tbody></table>
+          <p class="hint" style="margin:10px 0 0">Flange는 제조내역 엑셀에 없어, 판매번호(#26001)로 이은 수주서(NTK-SO-26001)에서 보완합니다.
+            A/S 이력은 서비스 데이터의 제품 일련번호로 찾고, A/S 횟수는 작업 구분에 "수리"가 있는 출장만 셉니다.</p>
         </div>`;
+      $('#sr-trips')?.addEventListener('click', (e) => { const tr = e.target.closest('tr[data-trip]'); if (tr && canService) openTripReport(+tr.dataset.trip, tr.dataset.date); });
     }
     $('#sr-form').addEventListener('submit', (e) => { e.preventDefault(); const q = e.target.q.value.trim(); if (q) search(q); });
     $('#sr-list').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-serial]'); if (tr) detail(tr.dataset.serial); });

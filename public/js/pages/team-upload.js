@@ -28,6 +28,14 @@ const UPLOADS = {
     tips: ['요청처의 시·도·시·군이 기억돼 있으면 자동으로 채우고, 없으면 확인 표에서 골라 주세요(저장하면 기억).', '잘린 값(…), 특히 긴 부품명은 전체 값으로 고쳐 주세요.',
       '같은 출장 시작일·요청처의 보고서가 있으면 건너뜁니다. 실제로 두 번 간 경우 "중복 아님"을 체크하세요.'],
   },
+  service_csv: {
+    title: '서비스 데이터 업로드', team: 'service', accept: '.csv', done: '#/service/reports', doneLabel: '출장보고서 목록에서 확인', skippedLabel: 'ID가 빈 줄',
+    sub: '서비스 데이터 CSV를 올리면 1줄 = 출장보고서 1건으로 읽습니다. 같은 ID가 이어지는 줄은 그 보고서의 제품으로 합칩니다.',
+    tips: ['같은 ID가 이미 저장돼 있으면 새 내용으로 덮어씁니다(바뀐 칸을 이전 → 새 값으로 표시). 내용이 같으면 건너뜁니다.',
+      '시·도·시·군은 "지역" 칸(예: 경상남도 김해시)에서 읽습니다. 비어 있으면 기억된 요청처 지역이나 요청처·출장 목적 글자에서 찾고, 그래도 없으면 확인 표에서 골라 주세요.',
+      '2차·3차 출장 작업 내용과 특이사항은 작업 내용·작업 결과 뒤에 이어 붙입니다. 작성자·동행자는 메일 주소를 빼고 이름·직함만 씁니다.',
+      'UTF-8·EUC-KR CSV 모두 읽습니다. 여러 달 파일은 하나씩 올리면 됩니다.'],
+  },
   part_price_csv: {
     skippedLabel: '분류 제목·빈 파트넘버', title: '부품 단가 데이터 업로드', team: 'service', accept: '.csv', back: '#/prices/parts', backLabel: '부품별 비교', done: '#/prices/parts', doneLabel: '부품별 비교에서 확인',
     sub: '부품 단가 데이터 CSV를 올리면 분류·파트넘버·품목·적용모델·기준단가를 읽어 단가표에 저장합니다. 같은 파트넘버가 이미 있으면 새 내용으로 덮어씁니다(바뀐 칸 표시).',
@@ -126,8 +134,10 @@ export function mountUpload(body, kind, { heading = '', batch: initial = null, o
   }
   function drawReview() {
     const s = batch.summary;
-    const rows = batch.rows.filter((r) => filter === 'all' || rowState(r) === filter);
-    const count = (k) => (k === 'all' ? batch.rows.length : batch.rows.filter((r) => rowState(r) === k).length);
+    const noted = (r) => Object.keys(r.fixes || {}).length + Object.keys(r.warnings || {}).length > 0;
+    const match = (r, k) => (k === 'all' ? true : k === 'noted' ? noted(r) : rowState(r) === k);
+    const rows = batch.rows.filter((r) => match(r, filter));
+    const count = (k) => batch.rows.filter((r) => match(r, k)).length;
     const pending = Object.keys(edits).length;
     const done = batch.status !== 'extracted';
     body.innerHTML = `
@@ -142,13 +152,14 @@ export function mountUpload(body, kind, { heading = '', batch: initial = null, o
         <div class="kv-row">
           <span>추출 <b>${s.total}</b>행</span><span>저장 예정 <b>${s.to_save}</b>${batch.update_existing ? ` (그중 갱신 ${s.update_rows})` : ''}</span>
           <span class="${s.error_rows ? 'bad' : ''}">오류 <b>${s.error_rows}</b></span><span>건너뜀 <b>${s.duplicate_rows}</b>${s.superseded_rows ? ` (아래 행으로 대체 ${s.superseded_rows})` : ''}</span>
-          <span>제외 <b>${s.excluded_rows}</b></span>${s.skipped_rows ? `<span class="muted">읽을 때 뺀 행(${conf.skippedLabel || '일련번호 없음'}) ${s.skipped_rows}</span>` : ''}
+          <span>제외 <b>${s.excluded_rows}</b></span>${s.fixed_rows ? `<span class="warn-txt">자동 수정 <b>${s.fixed_rows}</b>행</span>` : ''}${s.warning_rows ? `<span class="warn-txt">확인 필요 <b>${s.warning_rows}</b>행</span>` : ''}${s.skipped_rows ? `<span class="muted">읽을 때 뺀 행(${conf.skippedLabel || '일련번호 없음'}) ${s.skipped_rows}</span>` : ''}
         </div>
         ${done ? (batch.status === 'saved' ? `<div class="notice" style="margin:14px 0 0">저장했습니다 — ${batch.saved_count}건. <a href="${conf.done || `#/${conf.team}`}">${conf.doneLabel || '대시보드에서 확인'} →</a></div>` : '') : s.error_rows
           ? '<div class="notice warn" style="margin:14px 0 0">오류가 있는 행을 고치거나 제외해야 저장할 수 있습니다. 칸을 고친 뒤 [고친 값 반영 · 다시 검사]를 누르세요.</div>' : ''}
+        ${!done && (s.fixed_rows || s.warning_rows) ? `<div class="notice" style="margin:14px 0 0">오타로 보이는 값 ${s.fixed_rows}행은 자동으로 고쳤습니다(노란 칸에 원래 값 표시). 저장 전에 맞는지 확인해 주세요.${s.warning_rows ? ` 확인 필요 ${s.warning_rows}행은 고치지 않고 그대로 두었습니다.` : ''} 위쪽 [자동 수정·확인] 버튼으로 해당 행만 볼 수 있습니다.</div>` : ''}
       </div>
       <div class="card">
-        <div class="seg" id="tu-filter" style="margin-bottom:12px">${ROW_STATES.map(([k, l]) => `<button type="button" data-f="${k}" class="${filter === k ? 'on' : ''}">${l} ${count(k)}</button>`).join('')}</div>
+        <div class="seg" id="tu-filter" style="margin-bottom:12px">${[...ROW_STATES, ...(batch.rows.some(noted) ? [['noted', '자동 수정·확인']] : [])].map(([k, l]) => `<button type="button" data-f="${k}" class="${filter === k ? 'on' : ''}">${l} ${count(k)}</button>`).join('')}</div>
         ${!rows.length ? '<div class="empty">해당하는 행이 없습니다.</div>' : `
         ${batch.columns.filter((c) => c.suggestions).map((c) => `<datalist id="dl-${c.key}">${c.suggestions.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>`).join('')}
         <div class="table-wrap" style="max-height:65vh"><table class="tbl edit review">
@@ -164,10 +175,12 @@ export function mountUpload(body, kind, { heading = '', batch: initial = null, o
                 const err = r.errors?.[c.key];
                 const ch = r.changes?.[c.key];
                 const v = valueOf(r, c.key);
-                return `<td class="${err ? 'err' : ''} ${ch ? 'chg' : ''}">
+                return `<td class="${err ? 'err' : ''} ${ch ? 'chg' : ''} ${r.fixes?.[c.key] || r.warnings?.[c.key] ? 'fixed' : ''}">
                   ${done || r.excluded ? `<span class="pre">${esc(v)}</span>` : cellInput(c, r, v)}
                   ${err ? `<div class="cell-err">${esc(err)}</div>` : ''}
-                  ${ch ? `<div class="cell-chg">이전: ${esc(ch.old || '(빈 값)')}</div>` : ''}</td>`;
+                  ${ch ? `<div class="cell-chg">이전: ${esc(ch.old || '(빈 값)')}</div>` : ''}
+                  ${r.fixes?.[c.key] ? `<div class="cell-fix">⚠ ${esc(r.fixes[c.key])}</div>` : ''}
+                  ${r.warnings?.[c.key] ? `<div class="cell-fix">⚠ ${esc(r.warnings[c.key])}</div>` : ''}</td>`;
               }).join('')}
             </tr>`;
           }).join('')}</tbody></table></div>`}
@@ -302,7 +315,7 @@ const TEAM_NAMES = { mgmt: '경영지원팀', production: '생산팀', service: 
 const UPLOAD_LINKS = {
   mgmt: [['#/upload', '경영 데이터 업로드']],
   production: [['#/production/upload', '생산 데이터 업로드']],
-  service: [['#/service/reports/new', '출장보고서 입력']],
+  service: [['#/service/upload', '서비스 데이터 업로드']],
   prices: [['#/prices/upload', '부품 단가 데이터 업로드'], ['#/prices/new', '신규 부품 등록']],
 };
 export const history = {
