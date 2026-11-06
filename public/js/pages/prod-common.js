@@ -48,6 +48,18 @@ export async function periodSelector(slot, onChange) {
   return periodControl(slot, prodPeriod, { years, onChange: () => { setProdPeriod({}); onChange(); } });
 }
 
+// 다른 화면에서 출장보고서 하나를 열기: 그 출장 달로 기간을 맞추고 출장보고서 목록에서 상세를 연다
+export function openTripReport(id, startDate) {
+  setProdPeriod({ kind: 'month', year: +startDate.slice(0, 4), month: +startDate.slice(5, 7) });
+  try { sessionStorage.setItem('openTripReport', String(id)); } catch { /* 무시 */ }
+  location.hash = '#/service/reports';
+}
+// 다른 화면에서 일련번호 조회 열기
+export function openSerial(serial) {
+  try { sessionStorage.setItem('serialQuery', serial); } catch { /* 무시 */ }
+  location.hash = '#/production/serials';
+}
+
 // 납기 처리 상태 (출고일로 판단). 색만으로 구분하지 않도록 기호와 글자를 함께 붙인다
 export const DUE_STATUS = {
   overdue: { label: '납기 지남', icon: '!', cls: 'critical' },

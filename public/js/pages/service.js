@@ -1,11 +1,12 @@
 // 서비스팀 화면 (ITB2026에서 옮겨 옴)
 //  대시보드: 출장 실적(횟수·유상/무상·월별) · 출장지 지도와 지역 순위(시·도/시·군) · 교체 부품 · A/S 모델 · 담당자
-//  출장보고서 목록·상세 / 입력(PDF 올리기·직접 입력)
-import { api, esc, toast, today } from '../core.js';
+//  출장보고서 목록·상세 / 서비스 데이터 업로드(엑셀)
+import { api, esc } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
-import { koreaMap, hideMapTip } from '../korea-map.js';
+import { koreaMap, hideMapTip, mapKey } from '../korea-map.js';
+import { DISTRICT_POINTS } from '../regions.js';
 import { periodDownloadButton, bindPeriodDownload, downloadFrom, downloadPdf, fileSafe, stamp, addCardMenus, bindCardMenus } from '../exporter.js';
-import { prodPeriod, periodQS, periodSelector, dlPeriod, dash } from './prod-common.js';
+import { prodPeriod, periodQS, periodSelector, dlPeriod, dash, openSerial } from './prod-common.js';
 import { mountUpload } from './team-upload.js';
 
 const PAID_COLORS = { 유상: SERIES[0], 무상: SERIES[2] };
@@ -14,14 +15,23 @@ const cnt = (v) => `${Number(v).toLocaleString('ko-KR')}회`;
 const wonText = (v) => (v === null || v === undefined ? '-' : `${Number(v).toLocaleString('ko-KR')}원`);
 const PERSON_TOP = 5;
 
-function hbars(rows, unit, { limit = 10 } = {}) {
+// 순위 막대표. keyOf를 주면 줄마다 data-key(지도 원과 같은 값), hollow(r)이면 이름 앞에 빈 원 표시
+function hbars(rows, unit, { limit = 10, keyOf = null, hollow = () => false } = {}) {
   const max = Math.max(1, ...rows.map((r) => r.quantity));
   const total = rows.reduce((a, r) => a + r.quantity, 0);
-  return `<table class="tbl rank static"><tbody>${rows.slice(0, limit).map((r) => `<tr>
-    <td class="nm" title="${esc(r.name)}">${esc(r.name)}</td><td class="bar"><span style="width:${r.quantity / max * 100}%;background:${SERIES[0]}"></span></td>
+  return `<table class="tbl rank static"><tbody>${rows.slice(0, limit).map((r) => `<tr${keyOf ? ` data-key="${esc(keyOf(r))}"` : ''}>
+    <td class="nm" title="${esc(r.name)}">${hollow(r) ? '<i class="hollow-mark" title="시·군 없이 시·도 위치에 표시"></i>' : ''}${esc(r.name)}</td><td class="bar"><span style="width:${r.quantity / max * 100}%;background:${SERIES[0]}"></span></td>
     <td class="r num"><b>${r.quantity}${unit}</b></td><td class="r muted">${total ? Math.round(r.quantity / total * 1000) / 10 : 0}%</td></tr>`).join('') || '<tr><td class="muted">데이터가 없습니다.</td></tr>'}</tbody></table>
     ${rows.length > limit ? `<p class="hint" style="margin:6px 0 0">상위 ${limit}개 (전체 ${rows.length}개)</p>` : ''}`;
 }
+
+// 지도 글자용 짧은 이름: 시·도별은 시·도, 시·군별은 시·군 (고성군처럼 두 도에 있는 이름만 "경남 고성군")
+const DUP_DISTRICTS = (() => {
+  const seen = {};
+  Object.values(DISTRICT_POINTS).forEach((m) => Object.keys(m).forEach((d) => { seen[d] = (seen[d] || 0) + 1; }));
+  return new Set(Object.keys(seen).filter((d) => seen[d] > 1));
+})();
+const mapShortName = (i) => (!i.district ? (i.region || i.name) : DUP_DISTRICTS.has(i.district) ? i.name : i.district);
 
 export async function render(main) {
   let level = 'region';
@@ -61,7 +71,9 @@ export async function render(main) {
     const PCOL = [SERIES[2], SERIES[3], SERIES[6], SERIES[4], SERIES[5]];
     const personColor = (n) => (n === '기타' ? OTHER : PCOL[pNames.indexOf(n)] || OTHER);
     const regionItems = level === 'region' ? s.by_region : s.by_district;
+    const regionTotal = regionItems.reduce((a, r) => a + r.quantity, 0);
     const modelMax = Math.max(1, ...s.by_model.map((m) => m.quantity));
+    const ag = s.as_age;
 
     main.querySelector('#sv-body').innerHTML = `
       <div class="card" style="margin-bottom:18px" data-card="trips">
@@ -81,14 +93,15 @@ export async function render(main) {
       </div>
       <div class="split2" style="margin-bottom:18px">
         <div class="card" data-card="map">
-          <div class="card-head"><div class="ttl"><h3>출장지 지도</h3><span class="hint">점이 클수록 출장이 많음 (점에 마우스를 올리면 횟수)</span></div>
+          <div class="card-head"><div class="ttl"><h3>출장지 지도</h3><span class="hint">${level === 'region' ? '시·도' : '시·군'} 기준 · 상위 지역은 이름·횟수·비중을 바로 표시</span></div>
             <div class="seg sm" id="sv-level">${[['region', '시·도별'], ['district', '시·군별']].map(([v, l]) => `<button type="button" data-l="${v}" class="${level === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+          <div class="map-caption"><span>원 크기 = 출장 횟수 · 비율 = 전체 ${regionTotal.toLocaleString('ko-KR')}회 대비</span><span>마우스를 올리면 횟수·비중</span>
+            ${level === 'district' ? '<span><i class="hollow-mark"></i>시·군 없이 시·도 위치에 표시 (특별·광역시·세종시, 시·군 미지정)</span>' : ''}</div>
           <div id="sv-map" class="map-wrap"></div>
-          ${level === 'district' ? '<p class="hint" style="margin:6px 0 0">특별·광역시·세종시는 시 전체를 점 하나로 표시합니다.</p>' : ''}
         </div>
         <div class="card" data-card="regions">
           <div class="card-head"><div class="ttl"><h3>지역별 출장 순위</h3><span class="hint">${level === 'region' ? '시·도별' : '시·군별'}</span></div></div>
-          ${hbars(regionItems, '회', { limit: 17 })}
+          <div id="sv-rank">${hbars(regionItems, '회', { limit: 17, keyOf: mapKey, hollow: (r) => level === 'district' && !r.district })}</div>
         </div>
       </div>
       <div class="split3">
@@ -113,6 +126,16 @@ export async function render(main) {
           ${persons.length ? '<div class="donut-row"><div class="donut-box small"><canvas id="sv-person"></canvas></div><div class="legend" id="sv-person-legend"></div></div>' : '<div class="empty">데이터가 없습니다.</div>'}
           <p class="hint" style="margin:10px 0 0">비중 = 전체 참여 ${personTotal}회 중 차지하는 몫${s.by_person.length > PERSON_TOP ? ' · 6위부터는 "기타"로 묶음' : ''}</p>
         </div>
+      </div>
+      <div class="card" style="margin-top:18px" data-card="asage">
+        <div class="card-head"><div class="ttl"><h3>A/S 제품 출고 후 경과 기간</h3><span class="hint">이 기간 "수리" 출장의 제품을 일련번호로 제조내역과 이어, 출고(없으면 제조) 후 몇 년 만에 A/S를 받았는지</span></div></div>
+        ${!ag.total ? '<div class="empty">이 기간 수리 출장이 없습니다.</div>' : `
+        <div class="kv-row" style="margin-bottom:12px"><span>수리 출장 제품 <b class="big">${ag.total}</b>대</span><span>제조내역과 연결 ${ag.linked}대</span>
+          ${ag.median_text ? `<span>가운데 값 <b>출고 후 ${esc(ag.median_text)}</b></span>` : ''}</div>
+        <div class="split2 tight">
+          <div><div class="sub-ttl">출고 후 경과 (연결된 ${ag.linked}대)</div>${hbars(ag.buckets, '대', { limit: 4 })}</div>
+          <div><div class="sub-ttl">연결 안 됨 (${ag.total - ag.linked}대)</div>${hbars(ag.unlinked.filter((x) => x.quantity), '대', { limit: 3 })}</div>
+        </div>`}
       </div>`;
 
     addCardMenus(main.querySelector('#sv-body'));
@@ -125,7 +148,12 @@ export async function render(main) {
     if (persons.length) charts.push(donut(main.querySelector('#sv-person'), main.querySelector('#sv-person-legend'), persons, personColor, { fmt: cnt }));
     // 지도를 못 불러와도 나머지 화면은 그대로 보이게
     try {
-      await koreaMap(main.querySelector('#sv-map'), regionItems, { small: level === 'district' });
+      // 지도 원 ↔ 순위표 줄: 한쪽에 마우스를 올리면 다른 쪽도 강조
+      const rank = main.querySelector('#sv-rank');
+      const markRow = (key) => rank.querySelectorAll('tr[data-key]').forEach((tr) => tr.classList.toggle('hl', tr.dataset.key === key));
+      const map = await koreaMap(main.querySelector('#sv-map'), regionItems, { small: level === 'district', shortName: mapShortName, onHover: markRow });
+      rank.addEventListener('mouseover', (e) => { const tr = e.target.closest('tr[data-key]'); map.highlight(tr ? tr.dataset.key : null); markRow(tr ? tr.dataset.key : null); });
+      rank.addEventListener('mouseleave', () => { map.highlight(null); markRow(null); });
     } catch {
       main.querySelector('#sv-map').innerHTML = '<div class="empty">지도를 불러오지 못했습니다. 오른쪽 지역별 순위를 참고해 주세요.</div>';
     }
@@ -149,6 +177,7 @@ export async function render(main) {
         ...s.by_part.map((p) => [p.name, p.quantity, p.current_price ?? '', p.change ?? '', p.change_rate ?? ''])] };
       case 'models': return { name: 'AS제품모델순위', aoa: [['모델', '유상(대)', '무상(대)', '합계(대)'], ...s.by_model.map((m) => [m.name, m.paid, m.unpaid, m.quantity])] };
       case 'persons': return { name: '출장담당자', aoa: [['담당자', '참여(회)', '비중(%)'], ...share(s.by_person)] };
+      case 'asage': return { name: 'AS출고후경과', aoa: [['구분', '대수'], ...s.as_age.buckets.map((x) => [`출고 후 ${x.name}`, x.quantity]), ...s.as_age.unlinked.map((x) => [`연결 안 됨: ${x.name}`, x.quantity])] };
       default: return null;
     }
   }
@@ -156,7 +185,7 @@ export async function render(main) {
 
   bindPeriodDownload(main, 'sv-dl', {
     ...dlPeriod(), modes: ['year', 'quarter', 'month'], current: dlPeriod, currentYear: () => prodPeriod.year,
-    hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·출장보고서 목록을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로).',
+    hint: '고른 기간의 출장 실적·월별·지역·교체 부품·AS 모델·담당자·AS 출고 후 경과·출장보고서 목록을 시트별로 담습니다(CSV는 시트별 파일을 ZIP 하나로).',
     onExcel: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}`),
     onCsv: (period) => downloadFrom(`/api/service/dashboard/export?period=${period}&format=csv`),
   });
@@ -169,12 +198,24 @@ export async function render(main) {
 export const reports = {
   async render(main, ctx) {
     const editable = ctx.canEdit('service');
+    const canProd = ctx.can('production');
+    // 제품 줄 아래: 제조내역 연결 정보 (요약은 누구나, 일련번호 조회 링크는 생산팀 열람 권한이 있을 때만)
+    const mfgLine = (m) => {
+      if (!m) return '';
+      if (m.status === 'linked') {
+        const sn = canProd ? `<a href="#/production/serials" data-serial="${esc(m.serial_full)}">일련번호 조회 →</a>` : '';
+        return `<div class="mfg-link">제조 ${dash(m.manufactured_date)} · 출고 ${dash(m.shipped_date)} · ${dash(m.customer)}${m.project_name ? ` · ${esc(m.project_name)}` : ''}
+          ${m.elapsed ? ` · <b>${esc(m.base_label)} 후 ${esc(m.elapsed)}</b>` : ''} ${sn}</div>`;
+      }
+      const t = { missing: '제조내역에 없는 일련번호', old: '구 버전 제품 (A 번호 — 제조내역 없음)', none: '' }[m.status];
+      return t ? `<div class="mfg-link muted">${t}</div>` : '';
+    };
     let list = null;
     let openId = null;
     main.innerHTML = `
       <div class="page-head">
         <div><h2>출장보고서 목록</h2><div class="sub">출장 시작일 기준 · 줄을 누르면 고장·작업 내용까지 상세</div></div>
-        <div class="filters"><div id="rp-period"></div>${editable ? '<a class="btn primary" href="#/service/reports/new">+ 직접 입력</a>' : ''}</div>
+        <div class="filters"><div id="rp-period"></div>${editable ? '<a class="btn primary" href="#/service/upload">서비스 데이터 업로드</a>' : ''}</div>
       </div>
       <div class="card" style="margin-bottom:16px"><div id="rp-table"><div class="empty">불러오는 중…</div></div></div>
       <div id="rp-detail"></div>`;
@@ -193,7 +234,7 @@ export const reports = {
             <td>${esc(r.start_date)}${r.end_date && r.end_date !== r.start_date ? ` ~ ${esc(r.end_date.slice(5))}` : ''}</td><td><b>${esc(r.requester)}</b></td>
             <td>${esc(r.region)}${r.district ? ` ${esc(r.district)}` : ''}</td>
             <td><span class="status-chip ${r.paid_type === '유상' ? 'pending' : 'good'}">${esc(r.paid_type)}</span></td><td>${dash(r.work_type)}</td>
-            <td>${esc(r.models.join(', ') || '-')}</td><td>${esc(r.author)}</td><td class="muted">${r.input_method === 'manual' ? '직접 입력' : 'PDF'}</td></tr>`).join('')}</tbody>
+            <td>${esc(r.models.join(', ') || '-')}</td><td>${esc(r.author)}</td><td class="muted">${{ excel: '엑셀', csv: 'CSV', pdf: 'PDF', manual: '직접 입력' }[r.input_method] || esc(r.input_method)}</td></tr>`).join('')}</tbody>
         </table></div>`;
     }
     async function open(id) {
@@ -212,113 +253,34 @@ export const reports = {
               ${field('작성자 · 동행자', `${esc(r.author)}${r.companions.length ? ` · ${esc(r.companions.join(', '))}` : ''}`)}
             </tbody></table>
             <table class="tbl detail-tbl"><tbody>
-              ${field('제품', r.products.map((p) => `${esc(p.model_name)} × ${p.quantity}${p.spec ? ` <span class="muted">${esc(p.spec)}</span>` : ''}${p.serial_no_raw ? ` <span class="muted">S/N ${esc(p.serial_no_raw)}</span>` : ''}`).join('<br>'))}
+              ${field('제품', r.products.map((p) => `<div class="prod-line">${esc(p.model_name)} × ${p.quantity}${p.spec ? ` <span class="muted">${esc(p.spec)}</span>` : ''}${p.serial_no_raw ? ` <span class="muted">S/N ${esc(p.serial_no_raw)}</span>` : ''}${mfgLine(p.mfg)}</div>`).join(''))}
               ${field('교체 부품', esc(r.parts.join(', ')))}${field('고장 내용', esc(r.fault_description))}${field('작업 내용', esc(r.work_description))}${field('작업 결과', esc(r.work_result))}
             </tbody></table>
           </div>
-          <p class="hint" style="margin:10px 0 0">출장보고서 일련번호(A800…)는 제조내역 일련번호와 형식이 달라 원문 그대로 저장만 합니다.</p>
+          <p class="hint" style="margin:10px 0 0">일련번호가 N·Q 등으로 시작하면 제조내역과 이어 제조일자·출고일과 출장 때까지 지난 기간을 보여 줍니다. A로 시작하는 번호는 구 버전 제품이라 제조내역에 없습니다.</p>
         </div>`;
       $('#rp-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('#rp-detail').querySelectorAll('[data-serial]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openSerial(a.dataset.serial); }));
     }
     $('#rp-table').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-id]'); if (tr) open(Number(tr.dataset.id)); });
     await periodSelector($('#rp-period'), load);
     await load();
+    // 일련번호 조회의 A/S 이력에서 넘어온 경우 그 보고서를 바로 연다
+    let pending = null;
+    try { pending = sessionStorage.getItem('openTripReport'); sessionStorage.removeItem('openTripReport'); } catch { /* 무시 */ }
+    if (pending) await open(Number(pending));
   },
 };
 
-// ---------------- 출장보고서 입력: PDF 올리기 + 직접 입력 (서비스팀 수정 권한) ----------------
-export const reportForm = {
+// ---------------- 서비스 데이터 업로드: 엑셀 (서비스팀 수정 권한) ----------------
+export const dataUpload = {
   async render(main) {
-    const ch = await api('/api/service/form-choices');
-    const regionOf = Object.fromEntries(ch.requesters.map((r) => [r.requester, r]));
-    const productRow = (p = {}) => `<div class="prod-row">
-      <input class="input" data-p="model_name" placeholder="모델명 *" list="rf-models" value="${esc(p.model_name || '')}">
-      <input class="input" data-p="quantity" type="number" min="1" placeholder="수량 *" value="${esc(p.quantity || '1')}" style="width:90px">
-      <input class="input" data-p="spec" placeholder="사양" value="${esc(p.spec || '')}">
-      <input class="input" data-p="serial_no_raw" placeholder="일련번호(원문)" value="${esc(p.serial_no_raw || '')}">
-      <button type="button" class="btn sm danger" data-rm>삭제</button></div>`;
     main.innerHTML = `
       <div class="page-head">
-        <div><h2>출장보고서 입력</h2><div class="sub">PDF로 올리거나 직접 입력합니다. 같은 출장 시작일·요청처의 보고서가 있으면 저장 전에 알려 줍니다.</div></div>
-        <div class="filters"><a class="btn" href="#/service/reports">← 목록</a><a class="btn" href="#/service/uploads">업로드 이력</a></div>
+        <div><h2>서비스 데이터 업로드</h2><div class="sub">서비스 데이터 엑셀(서비스데이터_YYYYMM.xlsx)을 올리면 출장보고서로 읽어 확인 화면에 보여 줍니다. 같은 ID가 이미 있으면 새 내용으로 덮어씁니다.</div></div>
+        <div class="filters"><a class="btn" href="#/service/reports">출장보고서 목록</a><a class="btn" href="#/service/uploads">업로드 이력</a></div>
       </div>
-      <div id="rf-upload"></div>
-      <form id="rf" class="card" style="max-width:980px" autocomplete="off">
-        <div class="card-head"><div class="ttl"><h3>직접 입력</h3><span class="hint">PDF 업로드와 같은 규칙으로 검사합니다</span></div></div>
-        <datalist id="rf-requesters">${ch.requesters.map((r) => `<option value="${esc(r.requester)}">`).join('')}</datalist>
-        <datalist id="rf-people">${ch.people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-        <datalist id="rf-models">${ch.models.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-        <datalist id="rf-parts">${ch.parts.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-        <div class="form-grid three">
-          <div class="field"><label>출장 시작일 *</label><input class="input" type="date" name="start_date" value="${today()}" required></div>
-          <div class="field"><label>출장 종료일</label><input class="input" type="date" name="end_date"></div>
-          <div class="field"><label>비용청구 *</label><div class="seg" id="rf-paid"><button type="button" data-v="유상" class="on">유상</button><button type="button" data-v="무상">무상</button></div></div>
-          <div class="field"><label>요청처 *</label><input class="input" name="requester" list="rf-requesters" required placeholder="예: ○○정수장"><span class="hint" id="rf-req-hint"></span></div>
-          <div class="field"><label>시·도 *</label><select class="input" name="region"><option value="">선택</option>${ch.regions.map((r) => `<option>${r}</option>`).join('')}</select></div>
-          <div class="field"><label>시·군</label><select class="input" name="district" disabled><option value="">없음</option></select></div>
-          <div class="field"><label>요청처 구분</label><input class="input" name="requester_type" placeholder="예: 검색 불가"></div>
-          <div class="field"><label>작업 구분</label><input class="input" name="work_type" list="rf-work" placeholder="예: 수리"><datalist id="rf-work"><option value="수리"><option value="점검"><option value="설치"></datalist></div>
-          <div class="field"><label>추가 출장</label><input class="input" name="extra_trip" placeholder="예: 없음"></div>
-          <div class="field full"><label>출장 목적</label><input class="input" name="purpose"></div>
-          <div class="field"><label>작성자 *</label><input class="input" name="author" list="rf-people" required></div>
-          <div class="field" style="grid-column:span 2"><label>동행자 (쉼표로 구분)</label><input class="input" name="companions" list="rf-people" placeholder="예: 김○○ 대리, 이○○ 과장"></div>
-          <div class="field full"><label>제품 (모델명·수량은 필수)</label><div id="rf-products">${productRow()}</div><button type="button" class="btn sm" id="rf-add-prod">+ 제품 추가</button></div>
-          <div class="field full"><label>교체 부품 (쉼표로 구분 — 부품 단가표 품명을 쓰면 단가와 연결됩니다)</label><input class="input" name="parts" list="rf-parts" placeholder="예: Main Board, Magnetic Contactor"></div>
-          <div class="field full"><label>고장 내용</label><textarea class="input" name="fault_description" rows="3"></textarea></div>
-          <div class="field full"><label>작업 내용</label><textarea class="input" name="work_description" rows="3"></textarea></div>
-          <div class="field full"><label>작업 결과</label><textarea class="input" name="work_result" rows="2"></textarea></div>
-        </div>
-        <div id="rf-msg"></div>
-        <div class="filters" style="margin-top:14px"><label class="chk" id="rf-dup-wrap" hidden><input type="checkbox" id="rf-dup"> 중복 아님 — 같은 곳에 실제로 두 번 간 경우 저장</label>
-          <button class="btn primary">저장</button></div>
-      </form>`;
-    mountUpload(main.querySelector('#rf-upload'), 'trip_report_pdf', { heading: 'PDF로 올리기' });
-    const f = main.querySelector('#rf');
-    let paid = '유상';
-    const districtSel = f.district;
-    const fillDistricts = (region, sel = '') => {
-      const list = ch.districts[region] || [];
-      districtSel.disabled = !list.length;
-      districtSel.innerHTML = list.length ? `<option value="">선택</option>${list.map((d) => `<option ${d === sel ? 'selected' : ''}>${d}</option>`).join('')}` : '<option value="">없음 (특별·광역시)</option>';
-    };
-    f.region.addEventListener('change', () => fillDistricts(f.region.value));
-    // 요청처를 고르면 기억된 시·도·시·군을 자동으로 채운다
-    f.requester.addEventListener('change', () => {
-      const m = regionOf[f.requester.value.trim()];
-      main.querySelector('#rf-req-hint').textContent = m ? `기억된 지역: ${m.region} ${m.district}` : '';
-      if (m) { f.region.value = m.region; fillDistricts(m.region, m.district); }
-    });
-    main.querySelector('#rf-paid').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-v]');
-      if (!b) return;
-      paid = b.dataset.v;
-      main.querySelectorAll('#rf-paid button').forEach((x) => x.classList.toggle('on', x === b));
-    });
-    main.querySelector('#rf-add-prod').addEventListener('click', () => main.querySelector('#rf-products').insertAdjacentHTML('beforeend', productRow({ quantity: '1' })));
-    main.querySelector('#rf-products').addEventListener('click', (e) => { if ('rm' in e.target.dataset) e.target.closest('.prod-row').remove(); });
-    const split = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
-    const LABEL = { start_date: '출장 시작일', end_date: '출장 종료일', requester: '요청처', author: '작성자', region: '시·도', district: '시·군', paid_type: '비용청구',
-      products: '제품', parts: '교체 부품', companions: '동행자' };
-    f.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = Object.fromEntries(new FormData(f));
-      const body = {
-        ...fd, district: districtSel.disabled ? '' : districtSel.value, paid_type: paid, companions: split(fd.companions), parts: split(fd.parts),
-        products: [...main.querySelectorAll('.prod-row')].map((row) => Object.fromEntries([...row.querySelectorAll('[data-p]')].map((i) => [i.dataset.p, i.value]))),
-        allow_duplicate: main.querySelector('#rf-dup').checked,
-      };
-      const msg = main.querySelector('#rf-msg');
-      try {
-        const r = await api('/api/service/reports', { method: 'POST', body });
-        toast(`${r.start_date} ${r.requester} 출장보고서를 저장했습니다.`);
-        location.hash = '#/service/reports';
-      } catch (err) {
-        if (err.status === 409) main.querySelector('#rf-dup-wrap').hidden = false;
-        const fields = err.data?.fields;
-        msg.innerHTML = `<div class="notice ${err.status === 409 ? 'warn' : 'err'}" style="margin:14px 0 0"><b>${esc(err.message)}</b>
-          ${fields ? `<ul>${Object.entries(fields).map(([k, v]) => `<li>${esc(LABEL[k] || k)}: ${esc(v)}</li>`).join('')}</ul>` : ''}
-          ${err.data?.existing ? `<ul>${err.data.existing.map((x) => `<li>${esc(x.start_date)} ${esc(x.requester)} (작성 ${esc(x.author)})</li>`).join('')}</ul>` : ''}</div>`;
-      }
-    });
+      <div id="sd-upload"></div>`;
+    mountUpload(main.querySelector('#sd-upload'), 'service_excel');
   },
 };
