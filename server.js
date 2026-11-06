@@ -18,7 +18,7 @@ import * as service from './lib/service.js';
 import './lib/pdf-uploads.js'; // 수주서·출장보고서 PDF 업로드 규칙 등록
 import './lib/order-uploads.js'; // 생산 데이터 업로드: 수주내역 엑셀 시트 규칙 등록
 import './lib/part-uploads.js'; // 부품 단가 데이터(CSV)·신규 부품(엑셀) 업로드 규칙 등록
-import './lib/service-csv.js'; // 서비스 데이터(출장보고서) CSV 업로드 규칙 등록
+import './lib/service-upload.js'; // 서비스 데이터(출장보고서) 엑셀 업로드 규칙 등록
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -783,7 +783,7 @@ prod.get('/years', wrap(async (_req, res) => res.json({ earliest_year: await pro
 app.use('/api/production', prod);
 
 // ---------- 서비스팀 (ITB2026에서 옮겨 옴) ----------
-// 조회는 서비스팀 열람 권한. 보고서 입력은 서비스 데이터 CSV 업로드(/api/uploads, 서비스팀 수정 권한)
+// 조회는 서비스팀 열람 권한. 보고서 입력은 서비스 데이터 엑셀 업로드(/api/uploads, 서비스팀 수정 권한)
 const svc = express.Router();
 svc.use(requirePerm('service'));
 svc.use(requireEditFor('service'));

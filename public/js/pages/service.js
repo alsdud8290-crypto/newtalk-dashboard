@@ -1,6 +1,6 @@
 // 서비스팀 화면 (ITB2026에서 옮겨 옴)
 //  대시보드: 출장 실적(횟수·유상/무상·월별) · 출장지 지도와 지역 순위(시·도/시·군) · 교체 부품 · A/S 모델 · 담당자
-//  출장보고서 목록·상세 / 서비스 데이터 업로드(CSV)
+//  출장보고서 목록·상세 / 서비스 데이터 업로드(엑셀)
 import { api, esc } from '../core.js';
 import { donut, countStack, SERIES, OTHER, hideTooltip } from '../charts.js';
 import { koreaMap, hideMapTip, mapKey } from '../korea-map.js';
@@ -234,7 +234,7 @@ export const reports = {
             <td>${esc(r.start_date)}${r.end_date && r.end_date !== r.start_date ? ` ~ ${esc(r.end_date.slice(5))}` : ''}</td><td><b>${esc(r.requester)}</b></td>
             <td>${esc(r.region)}${r.district ? ` ${esc(r.district)}` : ''}</td>
             <td><span class="status-chip ${r.paid_type === '유상' ? 'pending' : 'good'}">${esc(r.paid_type)}</span></td><td>${dash(r.work_type)}</td>
-            <td>${esc(r.models.join(', ') || '-')}</td><td>${esc(r.author)}</td><td class="muted">${{ csv: 'CSV', pdf: 'PDF', manual: '직접 입력' }[r.input_method] || esc(r.input_method)}</td></tr>`).join('')}</tbody>
+            <td>${esc(r.models.join(', ') || '-')}</td><td>${esc(r.author)}</td><td class="muted">${{ excel: '엑셀', csv: 'CSV', pdf: 'PDF', manual: '직접 입력' }[r.input_method] || esc(r.input_method)}</td></tr>`).join('')}</tbody>
         </table></div>`;
     }
     async function open(id) {
@@ -272,15 +272,15 @@ export const reports = {
   },
 };
 
-// ---------------- 서비스 데이터 업로드: CSV (서비스팀 수정 권한) ----------------
+// ---------------- 서비스 데이터 업로드: 엑셀 (서비스팀 수정 권한) ----------------
 export const dataUpload = {
   async render(main) {
     main.innerHTML = `
       <div class="page-head">
-        <div><h2>서비스 데이터 업로드</h2><div class="sub">서비스 데이터 CSV(서비스데이터_YYYYMM.csv)를 올리면 출장보고서로 읽어 확인 화면에 보여 줍니다. 같은 ID가 이미 있으면 새 내용으로 덮어씁니다.</div></div>
+        <div><h2>서비스 데이터 업로드</h2><div class="sub">서비스 데이터 엑셀(서비스데이터_YYYYMM.xlsx)을 올리면 출장보고서로 읽어 확인 화면에 보여 줍니다. 같은 ID가 이미 있으면 새 내용으로 덮어씁니다.</div></div>
         <div class="filters"><a class="btn" href="#/service/reports">출장보고서 목록</a><a class="btn" href="#/service/uploads">업로드 이력</a></div>
       </div>
       <div id="sd-upload"></div>`;
-    mountUpload(main.querySelector('#sd-upload'), 'service_csv');
+    mountUpload(main.querySelector('#sd-upload'), 'service_excel');
   },
 };
